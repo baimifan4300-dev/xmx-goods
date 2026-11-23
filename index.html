@@ -4,27 +4,49 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#fff5f7">
+  <meta name="description" content="星愿收藏室 · 夏鸣星谷子图鉴，支持云端同步、商品管理与完整备份。">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <title>星愿收藏室 · 夏鸣星谷子图鉴</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+
+  <div class="boot-screen" id="bootScreen">
+    <div class="boot-mark">✦</div>
+    <p id="bootText">正在打开收藏室…</p>
+  </div>
+
   <header class="topbar">
     <a class="brand" href="#" aria-label="星愿收藏室首页">
       <span class="brand-mark">✦</span>
       <span><b>星愿收藏室</b><small>MY LITTLE COLLECTION</small></span>
     </a>
-    <button class="menu-toggle" id="menuToggle" aria-label="打开导航">☰</button>
-    <nav id="mainNav">
-      <button class="nav-link active" data-page="home">收藏首页</button>
-      <button class="nav-link" data-page="catalog">全图鉴</button>
-      <button class="nav-link" data-page="owned">我的收藏</button>
-      <button class="nav-link" data-page="wishlist">愿望清单</button>
-      <button class="nav-link" data-page="progress">收藏进度</button>
-    </nav>
+    <div class="topbar-tools">
+      <nav id="mainNav">
+        <button class="nav-link active" data-page="home">收藏首页</button>
+        <button class="nav-link" data-page="catalog">全图鉴</button>
+        <button class="nav-link" data-page="owned">我的收藏</button>
+        <button class="nav-link" data-page="wishlist">愿望清单</button>
+        <button class="nav-link" data-page="progress">收藏进度</button>
+      </nav>
+      <button class="account-btn" id="accountBtn" hidden aria-label="账户与数据管理">
+        <span class="account-avatar" id="accountAvatar">星</span>
+        <span class="account-label" id="accountLabel">账户</span>
+        <span class="sync-dot" id="syncDot" title="云端状态"></span>
+      </button>
+      <button class="menu-toggle" id="menuToggle" aria-label="打开导航">☰</button>
+    </div>
   </header>
 
   <main class="shell">
+    <div class="demo-banner hidden" id="demoBanner">
+      <b>本地预览模式</b>
+      <span>数据只保存在当前浏览器，不会跨设备同步。配置 Supabase 后即可启用云端账号与多设备同步。</span>
+      <button class="mini-btn" id="demoConfigBtn">查看配置方法</button>
+    </div>
+    <div class="offline-banner hidden" id="offlineBanner">网络已断开。重新联网后点“立即同步”即可获取最新云端数据。</div>
+
     <section class="page active" id="page-home">
       <div class="hero">
         <div class="hero-copy">
@@ -47,7 +69,7 @@
 
       <div class="section-heading">
         <div><span class="eyebrow">YOUR COLLECTION</span><h2>收藏概览</h2></div>
-        <span class="muted">慢慢收集，不必着急。</span>
+        <span class="muted" id="homeSyncHint">慢慢收集，不必着急。</span>
       </div>
       <div class="stats-grid">
         <article class="stat-card"><span class="stat-icon">✧</span><small>图鉴商品</small><strong id="totalCount">0</strong><span class="stat-foot">已收录的全部商品</span></article>
@@ -59,7 +81,7 @@
       <div class="home-bottom">
         <section class="panel welcome-panel">
           <span class="eyebrow">START HERE</span><h3>让图鉴从第一件谷子开始</h3>
-          <p>图鉴已接入 1537 件商品、20 个主分类，以及联动/满赠两个独立板块。从全图鉴开始逛，逐件认识它们吧。</p>
+          <p>图鉴已接入 <b id="homeTotal">1537</b> 件商品、20 个主分类，以及联动/满赠两个独立板块。商品、收藏和分类会同步到你的云端账号。</p>
           <button class="outline-btn" data-go="catalog">去浏览图鉴　→</button>
         </section>
         <section class="panel quick-panel">
@@ -79,17 +101,18 @@
       <div class="board-bar hidden" id="boardBar"></div>
       <div class="toolbar">
         <label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索商品名称、系列、分类或编号…"></label>
-        <select id="categoryFilter" aria-label="按类别筛选"><option value="">全部商品</option><optgroup label="主分类"><option value="main:badge">吧唧</option><option value="main:laser_ticket">镭射票</option><option value="main:poster">海报</option><option value="main:folder">文件夹</option><option value="main:hanging_picture">挂画</option><option value="main:coaster_set">杯垫套</option><option value="main:paper">纸制品</option><option value="main:gift_box">礼盒</option><option value="main:practical">实用谷</option><option value="main:standee">立牌</option><option value="main:mahjong">麻将</option><option value="main:decorative_painting">装饰画</option><option value="main:keychain">挂件</option><option value="main:acrylic">亚克力制品</option><option value="main:plush">毛绒</option><option value="main:art_card">色纸</option><option value="main:collection_card">收藏卡</option><option value="main:memorial_card">纪念卡</option><option value="main:handwritten_letter">手写信</option><option value="main:small_card">小卡</option></optgroup><optgroup label="独立板块"><option value="board:collab">联动</option><option value="board:gift">满赠</option></optgroup><optgroup label="分类核对"><option value="pending">待核对</option></optgroup></select>
+        <select id="categoryFilter" aria-label="按类别筛选"><option value="">全部商品</option></select>
         <select id="statusFilter" aria-label="按收藏状态筛选"><option value="">全部状态</option><option value="owned">已拥有</option><option value="wish">愿望清单</option><option value="none">未收藏</option></select>
-        <select id="sortFilter" aria-label="排序"><option value="name">按名称排序</option><option value="newest">最近添加</option><option value="price">价格从低到高</option></select>
+        <select id="sortFilter" aria-label="排序"><option value="name">按名称排序</option><option value="newest">最近添加</option><option value="price">价格从低到高</option><option value="market">市场价从低到高</option></select>
       </div>
-      <div class="result-line"><span id="resultCount">0 件商品</span><span>20 个主分类 · 联动/满赠独立板块</span></div>
+      <div class="result-line"><span id="resultCount">0 件商品</span><span id="catalogSyncHint">20 个主分类 · 联动/满赠独立板块</span></div>
       <div class="product-grid" id="productGrid"></div>
       <div class="empty-state" id="catalogEmpty"><div>✧</div><h3>这里还没有商品</h3><p>添加第一件商品，开始建立你的专属图鉴吧。</p><button class="primary-btn" id="emptyAddBtn">＋ 添加第一件商品</button></div>
     </section>
 
     <section class="page" id="page-owned">
       <div class="page-heading"><div><span class="eyebrow">MY TREASURES</span><h1>我的收藏</h1><p>已经来到你身边的那些小小珍藏。</p></div></div>
+      <div class="owned-summary panel" id="ownedSummary"></div>
       <div class="product-grid" id="ownedGrid"></div>
       <div class="empty-state" id="ownedEmpty"><div>♡</div><h3>收藏盒还空着</h3><p>在全图鉴中把商品标记为“已拥有”，它们就会出现在这里。</p><button class="outline-btn" data-go="catalog">去逛逛图鉴 →</button></div>
     </section>
@@ -104,27 +127,39 @@
       <div class="page-heading"><div><span class="eyebrow">COLLECTION JOURNEY</span><h1>收藏进度</h1><p>每一次收集，都是离完整更近一点。</p></div></div>
       <div class="progress-overview panel"><div><span class="eyebrow">OVERALL PROGRESS</span><h2 id="progressText">0% <small>COLLECTED</small></h2><p id="progressDetail">已拥有 0 / 0 件商品</p></div><div class="big-progress"><div id="bigProgressBar"></div></div></div>
       <div class="panel category-progress"><h3>按类别查看</h3><div id="categoryProgressList" class="progress-list"></div></div>
-      <div class="panel note-panel"><b>小提示</b><p>收集率只根据已经录入图鉴的商品计算。尚未录入的商品不会计入分母。</p></div>
+      <div class="panel note-panel"><b>小提示</b><p>收集率只根据已经录入图鉴的商品计算。尚未录入的商品不会计入分母。拥有数量不影响收集率，但会显示在卡片和详情中。</p></div>
     </section>
   </main>
 
-  <dialog id="productDialog">
-    <form id="productForm" method="dialog">
-      <div class="dialog-head"><div><span class="eyebrow">ADD TO YOUR CATALOG</span><h2>添加一件商品</h2></div><button type="button" class="close-btn" id="closeDialog" aria-label="关闭">×</button></div>
-      <input type="hidden" id="editId">
-      <div class="form-grid">
-        <label class="wide">商品名称 <input id="pName" required maxlength="80" placeholder="例如：夏鸣星·主题徽章"></label>
-        <label>商品类别 <select id="pCategory"><option value="badge">吧唧</option><option value="laser_ticket">镭射票</option><option value="poster">海报</option><option value="folder">文件夹</option><option value="hanging_picture">挂画</option><option value="coaster_set">杯垫套</option><option value="paper">纸制品</option><option value="gift_box">礼盒</option><option value="practical">实用谷</option><option value="standee">立牌</option><option value="mahjong">麻将</option><option value="decorative_painting">装饰画</option><option value="keychain">挂件</option><option value="acrylic">亚克力制品</option><option value="plush">毛绒</option><option value="art_card">色纸</option><option value="collection_card">收藏卡</option><option value="memorial_card">纪念卡</option><option value="handwritten_letter">手写信</option><option value="small_card">小卡</option></select></label>
-        <label>所属系列 <input id="pSeries" placeholder="例如：生日系列"></label>
-        <label>价格（元） <input id="pPrice" type="number" min="0" step="0.01" placeholder="可留空"></label>
-        <label>商品编号 <input id="pCode" placeholder="可留空"></label>
-        <label class="wide">图片地址 <input id="pImage" type="url" placeholder="可选：图片直链 https://…"></label>
-        <label class="wide">备注 <textarea id="pNote" rows="2" placeholder="版本、尺寸、购买渠道等"></textarea></label>
+  <div class="modal-root" id="modalRoot"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="auth-gate hidden" id="authGate">
+    <div class="auth-panel">
+      <div class="auth-brand"><span class="brand-mark">✦</span><span><b>星愿收藏室</b><small>CLOUD COLLECTION</small></span></div>
+      <span class="eyebrow">YOUR PRIVATE CLOUD</span>
+      <h1 id="authTitle">登录云端收藏室</h1>
+      <p class="auth-sub" id="authSub">同一个账号，电脑、手机、平板共享同一份图鉴与收藏。</p>
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" data-auth-tab="signin" role="tab">登录</button>
+        <button class="auth-tab" data-auth-tab="signup" role="tab">注册</button>
       </div>
-      <div class="dialog-actions"><button type="button" class="outline-btn" id="cancelDialog">取消</button><button type="submit" class="primary-btn">保存商品</button></div>
-    </form>
-  </dialog>
-  <div class="toast" id="toast" role="status"></div>
-  <script src="app.js"></script>
+      <form id="authForm" autocomplete="on">
+        <label>邮箱<input id="authEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>密码<input id="authPassword" type="password" autocomplete="current-password" minlength="6" required placeholder="至少 6 位"></label>
+        <button class="primary-btn auth-submit" id="authSubmit" type="submit">登录</button>
+      </form>
+      <div class="auth-links">
+        <button class="link-btn" id="authForgot" type="button">忘记密码</button>
+        <button class="link-btn" id="authResend" type="button" hidden>重发确认邮件</button>
+      </div>
+      <p class="auth-message" id="authMessage" role="status"></p>
+      <p class="auth-privacy">你的收藏、购买价格与备注仅当前账号可见。Supabase RLS 行级安全策略会隔离每个用户的数据。</p>
+      <button class="link-btn auth-demo" id="authDemo" type="button" hidden>先以本地预览模式进入 →</button>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>

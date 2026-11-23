@@ -1,0 +1,30 @@
+name: supabase-db-backup
+
+# 可选的数据库层定时备份。需要在 GitHub 仓库 Secrets 配置 SUPABASE_DB_URL。
+# 图片文件请使用网站“账户 → 完整备份”导出，或按 docs/备份与恢复.md 使用对象存储同步。
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Dump database (custom format)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          test -n "$SUPABASE_DB_URL"
+          mkdir -p backup
+          pg_dump "$SUPABASE_DB_URL" --format=custom --no-owner --no-privileges \
+            --file="backup/xmx-db-$(date -u +%Y%m%d-%H%M%S).dump"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xmx-supabase-db-${{ github.run_id }}
+          path: backup/*.dump
+          retention-days: 30

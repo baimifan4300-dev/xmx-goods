@@ -7,7 +7,7 @@ if errorlevel 1 (
   echo.
   echo Python not found.
   echo Install Python 3 from https://www.python.org/downloads/  ^(check "Add python.exe to PATH"^)
-  echo or open this folder in VS Code and use "Live Server".
+  echo or run: npm run dev
   echo.
   pause
   exit /b 1
@@ -16,10 +16,15 @@ if errorlevel 1 (
 echo Starting local server at http://127.0.0.1:8765 ...
 start "xmx-goods-server" python -m http.server 8765 --bind 127.0.0.1
 timeout /t 2 >nul
-start "" "http://127.0.0.1:8765/"
 
 echo.
-echo The site is open in your browser. Keep the "xmx-goods-server" window running.
-echo To stop the server, close that window or press Ctrl+C in it.
+echo   本地预览（不需要 Supabase）: http://127.0.0.1:8765/?demo=1
+echo   云端登录（需先配置）      : http://127.0.0.1:8765/
 echo.
+echo 本地预览数据只保存在当前浏览器，不会跨设备同步。
+echo 配置 Supabase 的步骤见 docs/云端部署与迁移.md。
+echo.
+start "" "http://127.0.0.1:8765/?demo=1"
+
+echo Keep the "xmx-goods-server" window running. Close it to stop the server.
 pause
