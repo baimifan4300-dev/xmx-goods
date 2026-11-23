@@ -1,0 +1,44 @@
+星愿收藏室 v2 · 本地预览说明
+================================
+
+这个压缩包是完整的网站：HTML、CSS、JS、data 数据和 assets 图片都在里面，解压后即可本地预览。
+
+【最简单的方式（推荐）】
+1. 把 zip 解压到任意文件夹，例如 D:\xmx-goods-preview
+2. 双击解压出来的 start.bat
+3. 浏览器会自动打开 http://127.0.0.1:8765/
+4. 想停止预览，关掉弹出的 "xmx-goods-server" 黑窗口即可
+
+注意：start.bat 需要电脑装了 Python 3（安装时勾选 "Add python.exe to PATH"）。
+没装 Python 的话，用 VS Code 打开这个文件夹，右键 index.html → "Open with Live Server" 也可以。
+
+【手动方式】
+在解压目录打开 PowerShell 或 CMD，执行：
+    python -m http.server 8765
+然后浏览器访问：
+    http://127.0.0.1:8765/
+
+【重要：不要直接双击 index.html】
+浏览器对 file:// 有安全限制，直接双击会读不到 data/*.json，页面会提示数据加载失败。
+必须通过上面的本地 HTTP 服务（http://127.0.0.1:8765/）访问。
+
+【页面地址】
+- 首页（作品/角色入口）：http://127.0.0.1:8765/
+- 图鉴：  http://127.0.0.1:8765/#/w/gyly/c/xmx/catalog
+- 我的收藏：http://127.0.0.1:8765/#/w/gyly/c/xmx/owned
+- 愿望清单：http://127.0.0.1:8765/#/w/gyly/c/xmx/wishlist
+- 收藏进度：http://127.0.0.1:8765/#/w/gyly/c/xmx/progress
+
+【数据说明】
+- 商品数据：data/gyly/xmx/products.json（1537 条，只读）
+- 作品/角色：data/works.json
+- 原图：assets/works/gyly/xmx/images/（57 张合集原图）
+- 裁剪缩略图：assets/works/gyly/xmx/thumbs/（1296 张，清晰度达标的商品才有）
+- 清晰度不足的 241 件商品不提供放大裁剪，卡片和详情显示整张合集图，用红框标位置。
+- 收藏状态只存在浏览器 localStorage（键名 xmx.collection.v1），换浏览器/清缓存会丢，重要数据请用首页的"导出收藏"备份。
+- 19 条待核实商品在图鉴里会显示"待核实"角标。
+
+【常见问题】
+- 端口被占用：把 start.bat 里的 8765 改成 8766 等其它端口。
+- 页面空白/0 件商品：确认是通过 http:// 打开，且 data、assets 文件夹与 index.html 同级。
+- 图片不显示：确认 assets/works/gyly/xmx/images 下有 img_01.jpg ~ img_57.jpg。
