@@ -1,0 +1,122 @@
+{
+ "version": 1,
+ "description": "夏鸣星谷子图鉴分类：20个主分类 + 2个独立板块 + 待核对",
+ "main": [
+  {
+   "key": "badge",
+   "label": "吧唧",
+   "order": 1
+  },
+  {
+   "key": "laser_ticket",
+   "label": "镭射票",
+   "order": 2
+  },
+  {
+   "key": "poster",
+   "label": "海报",
+   "order": 3
+  },
+  {
+   "key": "folder",
+   "label": "文件夹",
+   "order": 4
+  },
+  {
+   "key": "hanging_picture",
+   "label": "挂画",
+   "order": 5
+  },
+  {
+   "key": "coaster_set",
+   "label": "杯垫套",
+   "order": 6
+  },
+  {
+   "key": "paper",
+   "label": "纸制品",
+   "order": 7
+  },
+  {
+   "key": "gift_box",
+   "label": "礼盒",
+   "order": 8
+  },
+  {
+   "key": "practical",
+   "label": "实用谷",
+   "order": 9
+  },
+  {
+   "key": "standee",
+   "label": "立牌",
+   "order": 10
+  },
+  {
+   "key": "mahjong",
+   "label": "麻将",
+   "order": 11
+  },
+  {
+   "key": "decorative_painting",
+   "label": "装饰画",
+   "order": 12
+  },
+  {
+   "key": "keychain",
+   "label": "挂件",
+   "order": 13
+  },
+  {
+   "key": "acrylic",
+   "label": "亚克力制品",
+   "order": 14
+  },
+  {
+   "key": "plush",
+   "label": "毛绒",
+   "order": 15
+  },
+  {
+   "key": "art_card",
+   "label": "色纸",
+   "order": 16
+  },
+  {
+   "key": "collection_card",
+   "label": "收藏卡",
+   "order": 17
+  },
+  {
+   "key": "memorial_card",
+   "label": "纪念卡",
+   "order": 18
+  },
+  {
+   "key": "handwritten_letter",
+   "label": "手写信",
+   "order": 19
+  },
+  {
+   "key": "small_card",
+   "label": "小卡",
+   "order": 20
+  }
+ ],
+ "boards": [
+  {
+   "key": "collab",
+   "label": "联动",
+   "order": 1
+  },
+  {
+   "key": "gift",
+   "label": "满赠",
+   "order": 2
+  }
+ ],
+ "pending": {
+  "key": "pending",
+  "label": "待核对"
+ }
+}
