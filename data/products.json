@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "character": {
+    "name": "夏鸣星",
+    "work": "光与夜之恋"
+  },
+  "products": [],
+  "note": "将商品对象添加到 products 数组。每件商品建议包含 id、name、category、series、price、code、image、note。"
+}

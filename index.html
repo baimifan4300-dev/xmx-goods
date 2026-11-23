@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#fff5f7">
+  <title>星愿收藏室 · 夏鸣星谷子图鉴</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="星愿收藏室首页">
+      <span class="brand-mark">✦</span>
+      <span><b>星愿收藏室</b><small>MY LITTLE COLLECTION</small></span>
+    </a>
+    <button class="menu-toggle" id="menuToggle" aria-label="打开导航">☰</button>
+    <nav id="mainNav">
+      <button class="nav-link active" data-page="home">收藏首页</button>
+      <button class="nav-link" data-page="catalog">全图鉴</button>
+      <button class="nav-link" data-page="owned">我的收藏</button>
+      <button class="nav-link" data-page="wishlist">愿望清单</button>
+      <button class="nav-link" data-page="progress">收藏进度</button>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <section class="page active" id="page-home">
+      <div class="hero">
+        <div class="hero-copy">
+          <span class="eyebrow">A LITTLE UNIVERSE OF YOUR OWN</span>
+          <h1>把喜欢的瞬间，<br><em>好好收藏起来。</em></h1>
+          <p>每一份心动都有自己的位置。欢迎来到专属于你的夏鸣星收藏室。</p>
+          <button class="primary-btn" data-go="catalog">打开我的图鉴 <span>↗</span></button>
+        </div>
+        <div class="hero-art">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <div class="hero-star">✦</div><div class="hero-card">
+            <div class="hero-card-top">TANG XING · COLLECTION</div>
+            <div class="hero-card-symbol">☆</div>
+            <div class="hero-card-name">夏鸣星</div>
+            <div class="hero-card-sub">MY FAVORITE STAR</div>
+          </div>
+          <span class="spark s1">✧</span><span class="spark s2">✦</span><span class="spark s3">·</span>
+        </div>
+      </div>
+
+      <div class="section-heading">
+        <div><span class="eyebrow">YOUR COLLECTION</span><h2>收藏概览</h2></div>
+        <span class="muted">慢慢收集，不必着急。</span>
+      </div>
+      <div class="stats-grid">
+        <article class="stat-card"><span class="stat-icon">✧</span><small>图鉴商品</small><strong id="totalCount">0</strong><span class="stat-foot">已收录的全部商品</span></article>
+        <article class="stat-card"><span class="stat-icon">♡</span><small>已经拥有</small><strong id="ownedCount">0</strong><span class="stat-foot">放进收藏盒的心动</span></article>
+        <article class="stat-card"><span class="stat-icon">☆</span><small>愿望清单</small><strong id="wishCount">0</strong><span class="stat-foot">期待与未来的相遇</span></article>
+        <article class="stat-card"><span class="stat-icon">✿</span><small>收集率</small><strong id="rateCount">0%</strong><span class="stat-foot">以已录入商品为基准</span></article>
+      </div>
+
+      <div class="home-bottom">
+        <section class="panel welcome-panel">
+          <span class="eyebrow">START HERE</span><h3>让图鉴从第一件谷子开始</h3>
+          <p>目前这里还是一间空空的收藏室。你可以先添加商品，也可以稍后把整理好的商品 JSON 和合集图放进来。</p>
+          <button class="outline-btn" data-go="catalog">去添加第一件商品　→</button>
+        </section>
+        <section class="panel quick-panel">
+          <div class="panel-title"><h3>快速入口</h3><span>QUICK ACCESS</span></div>
+          <button class="quick-link" data-go="catalog"><span class="quick-icon">▦</span><span><b>全商品图鉴</b><small>浏览、搜索与管理商品</small></span><i>→</i></button>
+          <button class="quick-link" data-go="owned"><span class="quick-icon">♡</span><span><b>我的收藏</b><small>查看已经拥有的宝贝</small></span><i>→</i></button>
+          <button class="quick-link" data-go="wishlist"><span class="quick-icon">☆</span><span><b>愿望清单</b><small>记录下一份想要的心动</small></span><i>→</i></button>
+        </section>
+      </div>
+      <footer>MADE WITH LOVE · YOUR PRIVATE COLLECTION SPACE</footer>
+    </section>
+
+    <section class="page" id="page-catalog">
+      <div class="page-heading"><div><span class="eyebrow">THE COMPLETE CATALOG</span><h1>全商品图鉴</h1><p>把喜欢的每一件，都认真记录下来。</p></div><button class="primary-btn" id="addProductBtn">＋ 添加商品</button></div>
+      <div class="toolbar">
+        <label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索商品名称、系列或编号…"></label>
+        <select id="categoryFilter" aria-label="按类别筛选"><option value="">全部类别</option><option>徽章/吧唧</option><option>立牌</option><option>挂件</option><option>纸类</option><option>毛绒</option><option>其他</option></select>
+        <select id="statusFilter" aria-label="按收藏状态筛选"><option value="">全部状态</option><option value="owned">已拥有</option><option value="wish">愿望清单</option><option value="none">未收藏</option></select>
+        <select id="sortFilter" aria-label="排序"><option value="name">按名称排序</option><option value="newest">最近添加</option><option value="price">价格从低到高</option></select>
+      </div>
+      <div class="result-line"><span id="resultCount">0 件商品</span><span>商品资料保存在当前浏览器</span></div>
+      <div class="product-grid" id="productGrid"></div>
+      <div class="empty-state" id="catalogEmpty"><div>✧</div><h3>这里还没有商品</h3><p>添加第一件商品，开始建立你的专属图鉴吧。</p><button class="primary-btn" id="emptyAddBtn">＋ 添加第一件商品</button></div>
+    </section>
+
+    <section class="page" id="page-owned">
+      <div class="page-heading"><div><span class="eyebrow">MY TREASURES</span><h1>我的收藏</h1><p>已经来到你身边的那些小小珍藏。</p></div></div>
+      <div class="product-grid" id="ownedGrid"></div>
+      <div class="empty-state" id="ownedEmpty"><div>♡</div><h3>收藏盒还空着</h3><p>在全图鉴中把商品标记为“已拥有”，它们就会出现在这里。</p><button class="outline-btn" data-go="catalog">去逛逛图鉴 →</button></div>
+    </section>
+
+    <section class="page" id="page-wishlist">
+      <div class="page-heading"><div><span class="eyebrow">WISH UPON A STAR</span><h1>愿望清单</h1><p>先记下来，未来慢慢实现。</p></div></div>
+      <div class="product-grid" id="wishlistGrid"></div>
+      <div class="empty-state" id="wishlistEmpty"><div>☆</div><h3>暂时没有愿望</h3><p>在商品卡片上点亮星星，就能加入愿望清单。</p><button class="outline-btn" data-go="catalog">去发现心动 →</button></div>
+    </section>
+
+    <section class="page" id="page-progress">
+      <div class="page-heading"><div><span class="eyebrow">COLLECTION JOURNEY</span><h1>收藏进度</h1><p>每一次收集，都是离完整更近一点。</p></div></div>
+      <div class="progress-overview panel"><div><span class="eyebrow">OVERALL PROGRESS</span><h2 id="progressText">0% <small>COLLECTED</small></h2><p id="progressDetail">已拥有 0 / 0 件商品</p></div><div class="big-progress"><div id="bigProgressBar"></div></div></div>
+      <div class="panel category-progress"><h3>按类别查看</h3><div id="categoryProgressList" class="progress-list"></div></div>
+      <div class="panel note-panel"><b>小提示</b><p>收集率只根据已经录入图鉴的商品计算。尚未录入的商品不会计入分母。</p></div>
+    </section>
+  </main>
+
+  <dialog id="productDialog">
+    <form id="productForm" method="dialog">
+      <div class="dialog-head"><div><span class="eyebrow">ADD TO YOUR CATALOG</span><h2>添加一件商品</h2></div><button type="button" class="close-btn" id="closeDialog" aria-label="关闭">×</button></div>
+      <input type="hidden" id="editId">
+      <div class="form-grid">
+        <label class="wide">商品名称 <input id="pName" required maxlength="80" placeholder="例如：夏鸣星·主题徽章"></label>
+        <label>商品类别 <select id="pCategory"><option>徽章/吧唧</option><option>立牌</option><option>挂件</option><option>纸类</option><option>毛绒</option><option>其他</option></select></label>
+        <label>所属系列 <input id="pSeries" placeholder="例如：生日系列"></label>
+        <label>价格（元） <input id="pPrice" type="number" min="0" step="0.01" placeholder="可留空"></label>
+        <label>商品编号 <input id="pCode" placeholder="可留空"></label>
+        <label class="wide">图片地址 <input id="pImage" type="url" placeholder="可选：图片直链 https://…"></label>
+        <label class="wide">备注 <textarea id="pNote" rows="2" placeholder="版本、尺寸、购买渠道等"></textarea></label>
+      </div>
+      <div class="dialog-actions"><button type="button" class="outline-btn" id="cancelDialog">取消</button><button type="submit" class="primary-btn">保存商品</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
