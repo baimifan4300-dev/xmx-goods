@@ -2,7 +2,8 @@
 
 以 **V4 完整源码与 1537 条商品数据为唯一开发基准** 升级。保留原有页面、20 个主分类、联动/满赠分类管理、合集图红框定位和收藏功能，在此基础上接入 Supabase 云端数据库、账号、跨设备同步、站内商品管理、收藏数量/购买价/市场价、私有图片存储和完整备份恢复。
 
-> 当前仓库是待部署代码：`config.js` 默认留空，未连接真实 Supabase 项目。按 [云端部署与迁移](docs/云端部署与迁移.md) 配置后即可启用云端。
+> 在线地址（GitHub Pages）：https://baimifan4300-dev.github.io/xmx-goods/
+> `config.js` 只包含 Supabase Publishable/anon key，本来就要发给浏览器，可以公开；**service_role / secret key 绝不能进入前端或仓库**。
 > 不配置 Supabase 时，可用 `?demo=1` 进入本地预览；该模式明确标记为“本地预览”，不会伪装成云端同步。
 
 ## 1. 这次升级做了什么
