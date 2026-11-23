@@ -1,6 +1,6 @@
-/* 星愿收藏室 v2
+/* 星愿收藏室 v3
  * 多作品/多角色 · 只读商品数据 + 本地收藏状态
- * 数据：data/works.json + data/<work>/<char>/products.json
+ * 数据：data/works.json + data/categories.json + data/<work>/<char>/products.json
  * 收藏：localStorage "xmx.collection.v1"
  */
 const WORKS_URL = "data/works.json";
@@ -8,6 +8,38 @@ const STATE_KEY = "xmx.collection.v1";
 const LEGACY_STATE_KEY = "xmx-goods-v1";
 const LEGACY_PRODUCTS_KEY = "xmx-goods-products-v1";
 const PAGE_SIZE = 60;
+const CATEGORIES_URL = "data/categories.json";
+
+/* 分类配置：顺序必须与整理表一致；categories.json 读取失败时使用此内置配置 */
+const DEFAULT_CATEGORY_CONFIG = {
+  main: [
+    { key: "badge", label: "吧唧" },
+    { key: "laser_ticket", label: "镭射票" },
+    { key: "poster", label: "海报" },
+    { key: "folder", label: "文件夹" },
+    { key: "hanging_picture", label: "挂画" },
+    { key: "coaster_set", label: "杯垫套" },
+    { key: "paper", label: "纸制品" },
+    { key: "gift_box", label: "礼盒" },
+    { key: "practical", label: "实用谷" },
+    { key: "standee", label: "立牌" },
+    { key: "mahjong", label: "麻将" },
+    { key: "decorative_painting", label: "装饰画" },
+    { key: "keychain", label: "挂件" },
+    { key: "acrylic", label: "亚克力制品" },
+    { key: "plush", label: "毛绒" },
+    { key: "art_card", label: "色纸" },
+    { key: "collection_card", label: "收藏卡" },
+    { key: "memorial_card", label: "纪念卡" },
+    { key: "handwritten_letter", label: "手写信" },
+    { key: "small_card", label: "小卡" }
+  ],
+  boards: [
+    { key: "collab", label: "联动" },
+    { key: "gift", label: "满赠" }
+  ],
+  pending: { key: "pending", label: "待核对" }
+};
 
 const V2_CSS = `
 .works-section{margin:26px 0 0}
@@ -26,7 +58,7 @@ const V2_CSS = `
 .locator-inner img{width:100%;height:100%;object-fit:contain;display:block}
 .locator-box{position:absolute;border:1.5px solid #ff4d6d;border-radius:2px}
 .locator-tag{position:absolute;right:6px;bottom:6px;font-size:9px;background:#ffffffcc;color:#a4647a;padding:1px 5px;border-radius:6px}
-.pending-tag{position:absolute;left:8px;top:8px;background:#fff3cd;color:#8a6d3b;font-size:10px;padding:2px 6px;border-radius:8px}
+.pending-tag{position:absolute;left:8px;bottom:8px;top:auto;background:#fff3cd;color:#8a6d3b;font-size:10px;padding:2px 6px;border-radius:8px}
 .load-more{display:block;margin:18px auto 0}
 #detailDialog{border:0;border-radius:20px;padding:0;max-width:min(900px,94vw);box-shadow:0 30px 80px #7a4a5c33;background:#fff}
 #detailDialog::backdrop{background:transparent;backdrop-filter:none}
@@ -54,6 +86,7 @@ const $ = (id) => document.getElementById(id);
 const safe = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let works = [];
+let categoryConfig = DEFAULT_CATEGORY_CONFIG;
 let ctx = { work: null, char: null, products: [], catalogLoading: false };
 let state = { version: 1, owned: {}, wishlist: [] };
 let view = { q: "", cat: "", status: "", sort: "name", limit: PAGE_SIZE };
@@ -137,13 +170,25 @@ function priceLabel(p) {
   return "价格待补充";
 }
 
+/* 分类展示：主分类 > 独立板块 > 待核对；旧数据回退到 categoryLabel */
+function productCategoryLabel(p) {
+  if (p.classificationStatus === "待核对") return categoryConfig.pending?.label || "待核对";
+  return p.mainCategory || p.board || p.categoryLabel || "其他";
+}
+
+function productTagClass(p) {
+  if (p.classificationStatus === "待核对") return "product-tag tag-pending";
+  if (p.board) return "product-tag tag-board";
+  return "product-tag";
+}
+
 function cardHTML(p) {
   const owned = isOwned(p.id), wish = isWish(p.id);
-  const tag = p.categoryLabel || "其他";
+  const tag = productCategoryLabel(p);
   return `<article class="product-card" data-open="${safe(p.id)}">
     <div class="product-image crop-box">${mediaHTML(p)}
-      <span class="product-tag">${safe(tag)}</span>
-      ${p.verificationStatus === "pending" ? '<span class="pending-tag">待核实</span>' : ""}
+      <span class="${productTagClass(p)}">${safe(tag)}</span>
+      ${p.verificationStatus === "pending" && p.classificationStatus !== "待核对" ? '<span class="pending-tag">待核实</span>' : ""}
     </div>
     <div class="product-info"><h3>${safe(p.name || "待识别")}</h3>
       <div class="product-meta">${safe(p.series || p.folder || "未填写系列")}${p.productCode ? ` · ${safe(p.productCode)}` : ""}</div>
@@ -161,10 +206,19 @@ function filteredProducts() {
   const q = view.q.toLowerCase();
   let list = ctx.products.filter((p) => {
     if (q) {
-      const hay = [p.name, p.series, p.productCode, p.notes, p.folder].join(" ").toLowerCase();
+      const hay = [p.name, p.series, p.productCode, p.notes, p.folder,
+        p.mainCategory, p.board, p.classificationBasis].join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (view.cat && p.category !== view.cat) return false;
+    if (view.cat) {
+      if (view.cat === "pending") {
+        if (p.classificationStatus !== "待核对") return false;
+      } else {
+        const [kind, key] = view.cat.split(":");
+        if (kind === "main" && p.mainCategoryKey !== key) return false;
+        if (kind === "board" && p.boardKey !== key) return false;
+      }
+    }
     if (view.status === "owned" && !isOwned(p.id)) return false;
     if (view.status === "wish" && !isWish(p.id)) return false;
     if (view.status === "none" && (isOwned(p.id) || isWish(p.id))) return false;
@@ -231,14 +285,25 @@ function renderProgress() {
   $("progressText").innerHTML = `${rate}% <small>COLLECTED</small>`;
   $("progressDetail").textContent = `已拥有 ${owned} / ${total} 件商品`;
   $("bigProgressBar").style.width = rate + "%";
-  const cats = [...new Set(ctx.products.map((p) => p.category))];
-  const labels = {};
-  ctx.products.forEach((p) => { labels[p.category] = p.categoryLabel || p.category; });
-  $("categoryProgressList").innerHTML = cats.map((cat) => {
-    const all = ctx.products.filter((p) => p.category === cat);
+  const groups = [
+    ...categoryConfig.main.map((c) => ({
+      key: `main:${c.key}`, label: c.label,
+      match: (p) => p.mainCategoryKey === c.key
+    })),
+    ...categoryConfig.boards.map((b) => ({
+      key: `board:${b.key}`, label: `${b.label}（板块）`,
+      match: (p) => p.boardKey === b.key
+    })),
+    {
+      key: "pending", label: categoryConfig.pending?.label || "待核对",
+      match: (p) => p.classificationStatus === "待核对"
+    }
+  ];
+  $("categoryProgressList").innerHTML = groups.map((g) => {
+    const all = ctx.products.filter(g.match);
     const got = all.filter((p) => isOwned(p.id)).length;
     const pct = all.length ? Math.round((got / all.length) * 100) : 0;
-    return `<div class="progress-row"><span>${safe(labels[cat] || cat)}</span><div class="progress-track"><span style="width:${pct}%"></span></div><span>${got}/${all.length}</span></div>`;
+    return `<div class="progress-row ${g.key.startsWith("board:") ? "board-row" : ""}"><span>${safe(g.label)}</span><div class="progress-track"><span style="width:${pct}%"></span></div><span>${got}/${all.length}</span></div>`;
   }).join("");
 }
 
@@ -259,6 +324,22 @@ function renderAll() {
 }
 
 /* ---------------- 数据 ---------------- */
+async function loadCategories() {
+  try {
+    const res = await fetch(CATEGORIES_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(CATEGORIES_URL + " 读取失败");
+    const data = await res.json();
+    if (!Array.isArray(data.main) || data.main.length !== 20 ||
+        !Array.isArray(data.boards) || data.boards.length !== 2) {
+      throw new Error("分类配置需为 20 个主分类 + 2 个独立板块");
+    }
+    categoryConfig = data;
+  } catch (e) {
+    console.warn("分类配置读取失败，使用内置配置", e);
+    categoryConfig = DEFAULT_CATEGORY_CONFIG;
+  }
+}
+
 async function loadWorks() {
   const res = await fetch(WORKS_URL);
   if (!res.ok) throw new Error("works.json 读取失败");
@@ -365,10 +446,15 @@ function openDetail(id) {
     window.addEventListener("resize", place, { once: true });
   }
   $("detailName").textContent = p.name || "待识别";
-  $("detailMeta").innerHTML = `<span class="product-tag">${safe(p.categoryLabel)}</span>${p.verificationStatus === "pending" ? '<span class="pending-tag">待核实</span>' : ""}`;
+  const metaTags = [`<span class="${productTagClass(p)}">${safe(productCategoryLabel(p))}</span>`];
+  if (p.verificationStatus === "pending" && p.classificationStatus !== "待核对") metaTags.push('<span class="pending-tag">待核实</span>');
+  $("detailMeta").innerHTML = metaTags.join("");
   $("detailNote").innerHTML = p.image.sharp ? "" : `<div class="detail-note">该商品在原合集中可见像素较少，按清晰度规则不单独放大裁剪；上方整图红框是它的位置。</div>`;
   const rows = [
-    ["ID", p.id], ["系列", p.series || "—"], ["版本", p.version || "—"],
+    ["ID", p.id], ["主分类", p.mainCategory || "—"], ["独立板块", p.board || "—"],
+    ["分类状态", p.classificationStatus || "—"], ["分类置信度", p.classificationConfidence || "—"],
+    ["分类依据", p.classificationBasis || "—"],
+    ["系列", p.series || "—"], ["版本", p.version || "—"],
     ["价格", p.price != null ? `¥${p.price}` : (p.priceText || "—")],
     ["价格原文", p.priceText || "—"], ["编号", p.productCode || "—"],
     ["发售日期", p.releaseDate || "—"], ["来源文件夹", p.folder || "—"],
@@ -454,6 +540,8 @@ window.addEventListener("hashchange", applyRoute);
   loadState();
   injectShell();
   try {
+    await loadCategories();
+    fillCategoryFilter();
     await loadWorks();
     fillCategoryFilter();
     await applyRoute();
@@ -497,10 +585,15 @@ function injectShell() {
 
 function fillCategoryFilter() {
   const sel = $("categoryFilter");
-  if (!sel || !ctx.products.length) return;
-  const map = {};
-  ctx.products.forEach((p) => { map[p.category] = p.categoryLabel; });
-  sel.innerHTML = '<option value="">全部类别</option>' + Object.entries(map).map(([k, v]) => `<option value="${k}">${safe(v)}</option>`).join("");
-  if (view.cat) sel.value = view.cat;
-  else sel.value = "";
+  if (!sel) return;
+  const option = (value, label) => `<option value="${safe(value)}">${safe(label)}</option>`;
+  const mainOptions = categoryConfig.main.map((c) => option(`main:${c.key}`, c.label)).join("");
+  const boardOptions = categoryConfig.boards.map((b) => option(`board:${b.key}`, b.label)).join("");
+  const pendingLabel = categoryConfig.pending?.label || "待核对";
+  sel.innerHTML = '<option value="">全部商品</option>' +
+    `<optgroup label="主分类">${mainOptions}</optgroup>` +
+    `<optgroup label="独立板块">${boardOptions}</optgroup>` +
+    `<optgroup label="分类核对">${option("pending", pendingLabel)}</optgroup>`;
+  sel.value = view.cat || "";
+  if (sel.value !== (view.cat || "")) sel.value = "";
 }

@@ -1,10 +1,10 @@
-星愿收藏室 v2 · 本地预览说明
+星愿收藏室 v3 · 本地预览说明
 ================================
 
-这个压缩包是完整的网站：HTML、CSS、JS、data 数据和 assets 图片都在里面，解压后即可本地预览。
+v3 已完成 1537 条商品的分类接入：20 个主分类按整理表顺序排列，联动/满赠作为独立板块，另有 11 条待核对。
 
 【最简单的方式（推荐）】
-1. 把 zip 解压到任意文件夹，例如 D:\xmx-goods-preview
+1. 把 zip 解压到任意文件夹，例如 D:\xmx-goods-v3
 2. 双击解压出来的 start.bat
 3. 浏览器会自动打开 http://127.0.0.1:8765/
 4. 想停止预览，关掉弹出的 "xmx-goods-server" 黑窗口即可
@@ -29,16 +29,24 @@
 - 愿望清单：http://127.0.0.1:8765/#/w/gyly/c/xmx/wishlist
 - 收藏进度：http://127.0.0.1:8765/#/w/gyly/c/xmx/progress
 
+【分类筛选怎么看】
+全图鉴顶部的「全部商品」下拉框：
+- 主分类：吧唧、镭射票、海报、文件夹、挂画、杯垫套、纸制品、礼盒、实用谷、立牌、麻将、装饰画、挂件、亚克力制品、毛绒、色纸、收藏卡、纪念卡、手写信、小卡（严格按整理表顺序）
+- 独立板块：联动、满赠
+- 分类核对：待核对（11 条手办/摆件，20 类无对应）
+
 【数据说明】
-- 商品数据：data/gyly/xmx/products.json（1537 条，只读）
+- 商品数据：data/gyly/xmx/products.json（1537 条，只读；保留原字段并新增分类字段）
+- 分类顺序：data/categories.json（20 主分类 + 2 独立板块 + 待核对）
 - 作品/角色：data/works.json
 - 原图：assets/works/gyly/xmx/images/（57 张合集原图）
 - 裁剪缩略图：assets/works/gyly/xmx/thumbs/（1296 张，清晰度达标的商品才有）
 - 清晰度不足的 241 件商品不提供放大裁剪，卡片和详情显示整张合集图，用红框标位置。
 - 收藏状态只存在浏览器 localStorage（键名 xmx.collection.v1），换浏览器/清缓存会丢，重要数据请用首页的"导出收藏"备份。
-- 19 条待核实商品在图鉴里会显示"待核实"角标。
+- 原数据校验：19 条 verificationStatus=pending（商品资料待核实）；分类核对：11 条 classificationStatus=待核对。
 
 【常见问题】
 - 端口被占用：把 start.bat 里的 8765 改成 8766 等其它端口。
 - 页面空白/0 件商品：确认是通过 http:// 打开，且 data、assets 文件夹与 index.html 同级。
 - 图片不显示：确认 assets/works/gyly/xmx/images 下有 img_01.jpg ~ img_57.jpg。
+- 分类下拉框没有内容：确认 data/categories.json 存在；即使读取失败，app.js 也会使用内置的 20 类配置兜底。
