@@ -1,0 +1,19 @@
+[
+ {
+  "id": "gyly",
+  "title": "光与夜之恋",
+  "characters": [
+   {
+    "id": "xmx",
+    "name": "夏鸣星",
+    "catalog": "data/gyly/xmx/products.json",
+    "theme": {
+     "--pink": "#d989a2",
+     "--pink-dark": "#b76d86",
+     "--pale": "#fdf1f4"
+    },
+    "total": 1537
+   }
+  ]
+ }
+]
