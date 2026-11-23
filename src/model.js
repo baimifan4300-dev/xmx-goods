@@ -60,6 +60,9 @@ export function normalizeProduct(raw = {}) {
   p.marketPrice = p.marketPrice === "" || p.marketPrice === undefined || p.marketPrice === null
     ? null
     : (Number.isFinite(Number(p.marketPrice)) ? Number(p.marketPrice) : null);
+  p.marketPriceDate = p.marketPriceDate ?? p.market_price_date ?? null;
+  p.seriesId = p.seriesId ?? p.series_id ?? null;
+  p.deletedAt = p.deletedAt ?? p.deleted_at ?? null;
   p.isUserCreated = Boolean(p.isUserCreated);
   p.createdAt = p.createdAt || null;
   p.updatedAt = p.updatedAt || null;
@@ -100,6 +103,9 @@ export function rowToProduct(row) {
     classificationRow: row.classification_row,
     variety: row.variety,
     marketPrice: row.market_price,
+    marketPriceDate: row.market_price_date || null,
+    seriesId: row.series_id || null,
+    deletedAt: row.deleted_at || null,
     isUserCreated: row.is_user_created,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -150,6 +156,8 @@ export function productToRow(product, ownerId, { includeRevision = false } = {})
     payload,
     is_user_created: p.isUserCreated
   };
+  if (p.marketPriceDate !== undefined && p.marketPriceDate !== null) row.market_price_date = p.marketPriceDate;
+  if (p.seriesId !== undefined && p.seriesId !== null) row.series_id = p.seriesId;
   if (includeRevision && p._revision !== undefined) row.revision = p._revision;
   return row;
 }
@@ -225,6 +233,15 @@ export function rowToCollection(row) {
     purchasePrice: row.purchase_price === null ? null : Number(row.purchase_price),
     purchaseDate: row.purchase_date || "",
     note: row.note || "",
+    statusId: row.status_id || "owned",
+    targetPrice: row.target_price === null || row.target_price === undefined ? null : Number(row.target_price),
+    purchaseUrl: row.purchase_url || "",
+    storeName: row.store_name || "",
+    expectedArrivalDate: row.expected_arrival_date || "",
+    wishlistNote: row.wishlist_note || "",
+    locationId: row.location_id || null,
+    receivedAt: row.received_at || "",
+    deletedAt: row.deleted_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     revision: Number(row.revision) || 1
@@ -232,7 +249,7 @@ export function rowToCollection(row) {
 }
 
 export function collectionToRow(entry, ownerId) {
-  return {
+  const row = {
     owner_id: ownerId,
     product_id: entry.productId,
     quantity: Math.max(1, Number(entry.quantity) || 1),
@@ -241,6 +258,15 @@ export function collectionToRow(entry, ownerId) {
     purchase_date: entry.purchaseDate || null,
     note: entry.note || null
   };
+  if (entry.statusId !== undefined) row.status_id = entry.statusId || "owned";
+  if (entry.targetPrice !== undefined) row.target_price = entry.targetPrice === "" || entry.targetPrice === null ? null : Number(entry.targetPrice);
+  if (entry.purchaseUrl !== undefined) row.purchase_url = entry.purchaseUrl || null;
+  if (entry.storeName !== undefined) row.store_name = entry.storeName || null;
+  if (entry.expectedArrivalDate !== undefined) row.expected_arrival_date = entry.expectedArrivalDate || null;
+  if (entry.wishlistNote !== undefined) row.wishlist_note = entry.wishlistNote || null;
+  if (entry.locationId !== undefined) row.location_id = entry.locationId || null;
+  if (entry.receivedAt !== undefined) row.received_at = entry.receivedAt || null;
+  return row;
 }
 
 export function rowToBoardCategory(row) {

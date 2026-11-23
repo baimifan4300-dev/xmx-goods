@@ -311,7 +311,19 @@ await page.locator("#categoryFilter").selectOption("main:badge");
 await page.waitForTimeout(500);
 assert(Number((await page.locator("#resultCount").textContent()).replace(/\D/g, "")) >= 171, "吧唧主分类正常");
 
+console.log("11. 书籍页面与导航");
+await page.locator('[data-page="books"]').click();
+await page.waitForTimeout(500);
+assert(await page.locator("#page-books").evaluate((el) => el.classList.contains("active")), "书籍收藏页面可打开");
+assert((await page.locator("#bookResultCount").textContent()).includes("0 本书"), "本地预览书籍为空");
+await page.locator('[data-page="catalog"]').click();
+await page.waitForTimeout(300);
+
 console.log("错误日志：", errors.length ? errors.slice(0, 10) : "无");
 await page.screenshot({ path: path.join(artifacts, "v5-final.png") });
-await browser.close();
+try {
+  await browser.close();
+} catch (e) {
+  console.warn("浏览器关闭警告：", e.message);
+}
 if (errors.length) process.exitCode = 2;

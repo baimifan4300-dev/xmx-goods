@@ -10,6 +10,8 @@
     "check": "node scripts/check-data.mjs",
     "test": "node --test test/unit.test.mjs test/migrate.test.mjs",
     "test:db": "node test/db-schema.test.mjs",
+    "test:v6": "node test/v6-schema.test.mjs",
+    "test:v6:model": "node --test test/v6-model-backup.test.mjs",
     "test:e2e": "node test/e2e.mjs",
     "test:full-backup": "node test/backup-full.mjs",
     "config:check": "node scripts/check-config.mjs"

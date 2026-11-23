@@ -12,8 +12,12 @@ import {
   applyBoardToProduct, applyCategoryToProduct, makeNewProduct, normalizeProduct,
   sortCategories
 } from "./model.js";
-import { SupabaseBackend } from "./cloud-supabase.js";
+import { SupabaseBackendV6 } from "./v6/cloud-supabase-v6.js";
 import { LocalBackend } from "./cloud-local.js";
+import {
+  bookSetProgress, effectiveMainCategories, normalizeBook, normalizeBookSet, normalizeBookType,
+  normalizeSeries, normalizeSeriesItem, normalizeStatus
+} from "./v6/model.js";
 import { prepareImage, validateImageFile } from "./images.js";
 import {
   backupFileName, createBackup, inspectBackup, restoreBackup, restoreReportText
@@ -52,6 +56,15 @@ const store = {
   settings: {},
   settingsRevision: 1,
   mainCategories: DEFAULT_CATEGORY_CONFIG.main.map((c) => ({ ...c })),
+  customMainCategories: [],
+  mainCategoryPrefs: [],
+  statusDefinitions: [],
+  series: [],
+  seriesItems: [],
+  bookTypes: [],
+  bookSets: [],
+  books: [],
+  v6Ready: false,
   works: [],
   characters: [],
   localCategories: DEFAULT_CATEGORY_CONFIG
@@ -96,7 +109,7 @@ async function start() {
     return;
   }
 
-  state.backend = new SupabaseBackend(config);
+  state.backend = new SupabaseBackendV6(config);
   state.mode = "cloud";
   try {
     const user = await state.backend.init();
@@ -188,12 +201,17 @@ async function fetchBaseCatalog() {
   return baseCatalogPromise;
 }
 
+async function loadBackendSnapshot() {
+  if (typeof state.backend?.loadV6Snapshot === "function") return state.backend.loadV6Snapshot();
+  return state.backend.loadSnapshot();
+}
+
 async function bootApp() {
   if (state.booted || state.booting) return;
   state.booting = true;
   showBoot("正在连接云端收藏室…");
   try {
-    let snapshot = await state.backend.loadSnapshot();
+    let snapshot = await loadBackendSnapshot();
     let autoMigrationReport = null;
 
     if (state.mode === "cloud" && snapshot.products.length === 0) {
@@ -205,7 +223,7 @@ async function bootApp() {
         snapshot, baseProducts, legacy,
         onProgress: (p) => showBoot(p.message || "正在初始化云端图鉴…")
       });
-      snapshot = await state.backend.loadSnapshot();
+      snapshot = await loadBackendSnapshot();
     }
 
     if (state.mode === "cloud" && !snapshot.products.length) {
@@ -220,7 +238,7 @@ async function bootApp() {
         snapshot, baseProducts, legacy: { ...legacy, hasAny: false, hasBoards: false, customProducts: [] },
         onProgress: () => {}
       });
-      snapshot = await state.backend.loadSnapshot();
+      snapshot = await loadBackendSnapshot();
     }
 
     applySnapshot(snapshot);
@@ -298,31 +316,49 @@ function applySnapshot(snapshot) {
   }
   store.settings = snapshot.settings || {};
   store.settingsRevision = snapshot.settingsRevision || 1;
-  store.mainCategories = normalizeMainCategories(snapshot.mainCategories);
+  store.v6Ready = Boolean(snapshot.v6Ready);
+  store.customMainCategories = snapshot.customMainCategories || [];
+  store.mainCategoryPrefs = snapshot.mainCategoryPrefs || [];
+  store.statusDefinitions = (snapshot.statusDefinitions || []).map(normalizeStatus);
+  store.series = (snapshot.series || []).map(normalizeSeries).filter((s) => !s.deletedAt);
+  store.seriesItems = (snapshot.seriesItems || []).map(normalizeSeriesItem).filter((s) => !s.deletedAt);
+  store.bookTypes = (snapshot.bookTypes || []).map(normalizeBookType).filter((t) => !t.deletedAt);
+  store.bookSets = (snapshot.bookSets || []).map(normalizeBookSet).filter((s) => !s.deletedAt);
+  store.books = (snapshot.books || []).map(normalizeBook).filter((b) => !b.deletedAt);
+  store.mainCategories = normalizeMainCategories(snapshot.mainCategories, store.mainCategoryPrefs, store.customMainCategories);
   store.works = normalizeWorks(snapshot.works, snapshot.characters);
-  store.characters = snapshot.characters || [];
+  store.characters = store.works.flatMap((w) => w.characters || []);
   store.localCategories = staticConfig.categories;
 }
 
-function normalizeMainCategories(rows) {
-  const list = (rows || []).filter((r) => r?.key && r?.label).map((r, i) => ({
-    key: r.key, label: r.label, order: Number(r.sort_order ?? r.order ?? i + 1)
-  })).sort((a, b) => a.order - b.order);
-  if (list.length === 20) return list;
-  return staticConfig.categories.main.map((c, i) => ({ ...c, order: i + 1 }));
+function normalizeMainCategories(rows, prefs = [], custom = []) {
+  const list = effectiveMainCategories(rows || [], prefs || [], custom || []).map((c) => ({
+    key: c.key, label: c.label, order: c.sortOrder, sortOrder: c.sortOrder, isBuiltin: c.isBuiltin
+  }));
+  if (list.length >= 20) return list;
+  return staticConfig.categories.main.map((c, i) => ({ ...c, order: i + 1, sortOrder: i + 1, isBuiltin: true }));
 }
 
 function normalizeWorks(cloudWorks, cloudCharacters) {
-  if (Array.isArray(cloudWorks) && cloudWorks.length) {
-    return cloudWorks.map((w, wi) => ({
+  const activeWorks = (cloudWorks || []).filter((w) => !w.deleted_at);
+  if (Array.isArray(activeWorks) && activeWorks.length) {
+    return activeWorks.map((w, wi) => ({
       ...w,
       id: w.id,
       title: w.title,
       sort_order: w.sort_order ?? wi + 1,
-      characters: (cloudCharacters || []).filter((c) => c.work_id === w.id).map((c, ci) => ({
+      sortOrder: w.sort_order ?? wi + 1,
+      ownerId: w.owner_id || w.ownerId || null,
+      isBuiltin: Boolean(w.is_builtin ?? w.isBuiltin),
+      revision: Number(w.revision) || 1,
+      characters: (cloudCharacters || []).filter((c) => c.work_id === w.id && !c.deleted_at).map((c, ci) => ({
         id: c.id, name: c.name, theme: c.theme || {}, total: c.total || 0,
         catalog: c.catalog || `data/${w.id}/${c.id}/products.json`,
-        sort_order: c.sort_order ?? ci + 1
+        sort_order: c.sort_order ?? ci + 1,
+        sortOrder: c.sort_order ?? ci + 1,
+        ownerId: c.owner_id || c.ownerId || null,
+        isBuiltin: Boolean(c.is_builtin ?? c.isBuiltin),
+        revision: Number(c.revision) || 1
       }))
     }));
   }
@@ -596,10 +632,52 @@ function setupShell() {
     section.className = "works-section";
     section.innerHTML = `<div class="section-heading">
       <div><span class="eyebrow">WORKS & CHARACTERS</span><h2>作品与角色</h2></div>
-      <span class="muted"><button class="mini-btn" id="openDataBtn">数据与备份</button></span>
+      <span class="muted"><button class="mini-btn" id="manageWorksBtn">管理作品/角色</button> <button class="mini-btn" id="openDataBtn">数据与备份</button></span>
     </div><div id="worksStrip" class="works-strip"></div>`;
     home.insertBefore(section, home.querySelector(".hero"));
     section.querySelector("#openDataBtn").addEventListener("click", openAccountDialog);
+    section.querySelector("#manageWorksBtn").addEventListener("click", openWorksManager);
+  }
+  if ($("addProductBtn") && !$("manageCategoriesBtn")) {
+    $("addProductBtn").insertAdjacentHTML("beforebegin",
+      `<button class="outline-btn" id="manageCategoriesBtn">分类管理</button>
+       <button class="outline-btn" id="manageSeriesBtn">系列清单</button> `);
+    $("manageCategoriesBtn").addEventListener("click", openCategoryManager);
+    $("manageSeriesBtn").addEventListener("click", openSeriesManager);
+  }
+  if ($("mainNav") && !$("mainNav").querySelector('[data-page="books"]')) {
+    const before = $("mainNav").querySelector('[data-page="progress"]');
+    if (before) before.insertAdjacentHTML("beforebegin", '<button class="nav-link" data-page="books">书籍收藏</button>');
+    else $("mainNav").insertAdjacentHTML("beforeend", '<button class="nav-link" data-page="books">书籍收藏</button>');
+  }
+  if (!$("page-books")) {
+    const page = document.createElement("section");
+    page.className = "page";
+    page.id = "page-books";
+    page.innerHTML = `<div class="page-heading"><div><span class="eyebrow">BOOKS & VOLUMES</span><h1>书籍收藏</h1>
+      <p>漫画、小说、画集、设定集；支持套书逐卷管理。</p></div>
+      <div class="book-head-actions"><button class="outline-btn" id="manageBookTypesBtn">类型管理</button>
+        <button class="outline-btn" id="addBookSetBtn">＋ 套书</button>
+        <button class="primary-btn" id="addBookBtn">＋ 单本</button></div></div>
+      <div class="toolbar">
+        <label class="search-box"><span>⌕</span><input id="bookSearch" type="search" placeholder="搜索书名、作者、出版社、ISBN…"></label>
+        <select id="bookTypeFilter"><option value="">全部类型</option></select>
+        <select id="bookStatusFilter"><option value="">全部状态</option></select>
+      </div>
+      <div class="result-line"><span id="bookResultCount">0 本</span><span id="bookSyncHint">套书进度按已入手卷数计算</span></div>
+      <div id="bookSetSection"><div class="section-heading"><div><span class="eyebrow">SETS</span><h2>套书</h2></div></div><div class="product-grid" id="bookSetGrid"></div></div>
+      <div class="section-heading"><div><span class="eyebrow">ALL BOOKS</span><h2>全部书籍</h2></div></div>
+      <div class="product-grid" id="bookGrid"></div>
+      <div class="empty-state" id="bookEmpty"><div>▤</div><h3>还没有书籍</h3><p>先添加一本单本，或新建一套套书。</p><button class="primary-btn" id="emptyAddBookBtn">＋ 添加第一本书</button></div>`;
+    const shell = document.querySelector("main.shell");
+    shell.insertBefore(page, $("page-owned"));
+    page.querySelector("#addBookBtn").addEventListener("click", () => openBookForm());
+    page.querySelector("#emptyAddBookBtn").addEventListener("click", () => openBookForm());
+    page.querySelector("#addBookSetBtn").addEventListener("click", () => openBookSetForm());
+    page.querySelector("#manageBookTypesBtn").addEventListener("click", openBookTypeManager);
+    page.querySelector("#bookSearch").addEventListener("input", () => renderBooks());
+    page.querySelector("#bookTypeFilter").addEventListener("change", () => renderBooks());
+    page.querySelector("#bookStatusFilter").addEventListener("change", () => renderBooks());
   }
   if ($("productGrid") && !$("loadMoreBtn")) {
     const btn = document.createElement("button");
@@ -611,14 +689,25 @@ function setupShell() {
   }
 }
 
+function currentCharacterProducts() {
+  const workId = state.currentWork?.id;
+  const charId = state.currentChar?.id;
+  return store.products.filter((p) => (!workId || p.workId === workId) && (!charId || p.characterId === charId) && !p.deletedAt);
+}
+
+function countForCharacter(workId, charId) {
+  return store.products.filter((p) => p.workId === workId && p.characterId === charId && !p.deletedAt).length;
+}
+
 function renderAll() {
   if (!state.booted) return;
-  const total = store.products.length;
-  const ownedKinds = store.collections.size;
-  const ownedPieces = [...store.collections.values()].reduce((sum, c) => sum + (Number(c.quantity) || 1), 0);
+  const scoped = currentCharacterProducts();
+  const total = scoped.length;
+  const ownedKinds = scoped.filter((p) => store.collections.has(p.id)).length;
+  const ownedPieces = scoped.reduce((sum, p) => sum + (Number(store.collections.get(p.id)?.quantity) || 0), 0);
   $("totalCount").textContent = total;
   $("ownedCount").textContent = ownedKinds;
-  $("wishCount").textContent = store.wishlist.size;
+  $("wishCount").textContent = scoped.filter((p) => store.wishlist.has(p.id)).length;
   $("rateCount").textContent = (total ? Math.round((ownedKinds / total) * 100) : 0) + "%";
   if ($("homeTotal")) $("homeTotal").textContent = total;
   const hint = state.mode === "cloud"
@@ -634,9 +723,10 @@ function renderAll() {
   renderBoardBar();
   fillCategoryFilter();
   renderCatalog();
-  renderGrid("ownedGrid", store.products.filter((p) => store.collections.has(p.id)), "ownedEmpty", true);
-  renderGrid("wishlistGrid", store.products.filter((p) => store.wishlist.has(p.id)), "wishlistEmpty", false);
+  renderGrid("ownedGrid", scoped.filter((p) => store.collections.has(p.id)), "ownedEmpty", true);
+  renderGrid("wishlistGrid", scoped.filter((p) => store.wishlist.has(p.id)), "wishlistEmpty", false);
   renderProgress();
+  renderBooks();
   renderOwnedSummary();
   updateAccountButton();
 }
@@ -651,7 +741,7 @@ function renderWorksStrip() {
         const active = state.currentChar?.id === c.id && state.currentWork?.id === w.id;
         return `<a class="char-chip ${active ? "active" : ""}" href="#/w/${safe(w.id)}/c/${safe(c.id)}">
           <span class="char-avatar" style="background:${safe(c.theme?.["--pink"] || "#e8b9c9")}">${safe((c.name || "?").slice(0, 1))}</span>
-          <span><b>${safe(c.name)}</b><small>${(c.total || (state.currentChar?.id === c.id ? store.products.length : 0))} 件</small></span></a>`;
+          <span><b>${safe(c.name)}</b><small>${countForCharacter(w.id, c.id)} 件</small></span></a>`;
       }).join("")}</div>
     </div>`).join("");
 }
@@ -696,11 +786,12 @@ function renderGrid(id, items, emptyId, showPurchase) {
 }
 
 function renderProgress() {
-  const total = store.products.length;
-  const owned = store.collections.size;
+  const scoped = currentCharacterProducts();
+  const total = scoped.length;
+  const owned = scoped.filter((p) => store.collections.has(p.id)).length;
   const rate = total ? Math.round((owned / total) * 100) : 0;
   $("progressText").innerHTML = `${rate}% <small>COLLECTED</small>`;
-  $("progressDetail").textContent = `已拥有 ${owned} / ${total} 种商品，共 ${[...store.collections.values()].reduce((s, c) => s + (Number(c.quantity) || 1), 0)} 件`;
+  $("progressDetail").textContent = `已拥有 ${owned} / ${total} 种商品，共 ${scoped.reduce((s, p) => s + (Number(store.collections.get(p.id)?.quantity) || 0), 0)} 件`;
   $("bigProgressBar").style.width = rate + "%";
   const groups = [
     ...store.mainCategories.map((c) => ({
@@ -717,7 +808,7 @@ function renderProgress() {
     }
   ];
   $("categoryProgressList").innerHTML = groups.map((g) => {
-    const all = store.products.filter(g.match);
+    const all = scoped.filter(g.match);
     const got = all.filter((p) => store.collections.has(p.id)).length;
     const pct = all.length ? Math.round((got / all.length) * 100) : 0;
     return `<div class="progress-row ${g.key.startsWith("board:") ? "board-row" : ""}" data-jump-cat="${safe(g.key)}"><span>${safe(g.label)}</span><div class="progress-track"><span style="width:${pct}%"></span></div><span>${got}/${all.length}</span></div>`;
@@ -743,6 +834,9 @@ function filteredProducts() {
   const q = view.q.toLowerCase();
   const [kind, key] = String(view.cat || "").split(":");
   let list = store.products.filter((p) => {
+    if (p.deletedAt) return false;
+    if (state.currentWork?.id && p.workId !== state.currentWork.id) return false;
+    if (state.currentChar?.id && p.characterId !== state.currentChar.id) return false;
     if (q) {
       const hay = [p.name, p.series, p.productCode, p.notes, p.folder, p.variety,
         p.mainCategory, p.board, p.classificationBasis, p.marketPrice]
@@ -810,7 +904,8 @@ function cardHTML(product, opts = {}) {
 
 function productCategoryLabel(p) {
   if (p.classificationStatus === "待核对") return staticConfig.categories.pending?.label || "待核对";
-  return p.mainCategory || p.board || p.categoryLabel || "其他";
+  const category = store.mainCategories.find((c) => c.key === p.mainCategoryKey);
+  return category?.label || p.mainCategory || p.board || p.categoryLabel || "其他";
 }
 
 function productTagClass(p) {
@@ -899,6 +994,10 @@ function handleGlobalClick(event) {
     if (action.dataset.action === "detail") openDetail(id);
     return;
   }
+  const bookSetCard = event.target.closest("[data-book-set-open]");
+  if (bookSetCard) { openBookSetDetail(bookSetCard.dataset.bookSetOpen); return; }
+  const bookCard = event.target.closest("[data-book-open]");
+  if (bookCard) { openBookDetail(bookCard.dataset.bookOpen); return; }
   const card = event.target.closest("[data-open]");
   if (card) openDetail(card.dataset.open);
 }
@@ -909,7 +1008,7 @@ function go(page) {
 }
 
 function showPage(page) {
-  const map = { home: "home", catalog: "catalog", owned: "owned", wishlist: "wishlist", progress: "progress" };
+  const map = { home: "home", catalog: "catalog", books: "books", owned: "owned", wishlist: "wishlist", progress: "progress" };
   const target = "page-" + (map[page] || "home");
   $$(".page").forEach((el) => el.classList.toggle("active", el.id === target));
   $$(".nav-link").forEach((el) => el.classList.toggle("active", el.dataset.page === page));
@@ -944,6 +1043,9 @@ async function applyRoute() {
   if (!work || !char) { showPage("home"); return; }
   state.currentWork = work;
   state.currentChar = char;
+  view.limit = PAGE_SIZE;
+  const [catKind, catKey] = String(view.cat || "").split(":");
+  if (catKind === "main" && !store.mainCategories.some((c) => c.key === catKey)) view.cat = "";
   applyTheme(char);
   fillCategoryFilter();
   showPage(route ? (route.page || "home") : "home");
@@ -1144,6 +1246,985 @@ async function assignBoardProduct(productId, boardKey, categoryId) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 作品 / 角色管理                                                            */
+/* -------------------------------------------------------------------------- */
+
+function ensureWorksManager() {
+  let dlg = $("worksManagerDialog");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "worksManagerDialog";
+  dlg.className = "xmx-modal";
+  dlg.innerHTML = `<div class="xmx-modal-inner">
+    <div class="xmx-modal-head"><div><span class="eyebrow">WORKS & CHARACTERS</span><h2>作品与角色管理</h2>
+      <p>新增、编辑、删除作品和角色；有商品关联时禁止删除。</p></div>
+      <button class="close-btn" id="wmClose" aria-label="关闭">×</button></div>
+    <div class="xmx-modal-body" id="wmBody"></div>
+    <div class="xmx-modal-actions"><button class="outline-btn" id="wmAddWork">＋ 新增作品</button>
+      <button class="primary-btn" id="wmDone">完成</button></div></div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#wmClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#wmDone").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#wmAddWork").addEventListener("click", addWorkFromManager);
+  dlg.querySelector("#wmBody").addEventListener("click", handleWorksManagerClick);
+  return dlg;
+}
+
+function openWorksManager() {
+  if (state.mode !== "cloud") { toast("作品/角色管理需要云端账号。", "warn"); return; }
+  if (!store.v6Ready) { toast("V6 数据库尚未就绪，请先执行增量 Migration。", "warn", 5000); return; }
+  const dlg = ensureWorksManager();
+  renderWorksManager();
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderWorksManager() {
+  const el = $("wmBody");
+  if (!el) return;
+  if (!store.works.length) {
+    el.innerHTML = `<div class="empty-state"><div>✦</div><h3>还没有作品</h3><p>先新增一个作品，再添加角色。</p></div>`;
+    return;
+  }
+  el.innerHTML = store.works.map((w) => `
+    <div class="work-manage" data-work="${safe(w.id)}">
+      <div class="work-manage-head">
+        <div><b>${safe(w.title)}</b><small>${w.isBuiltin ? "内置作品" : "自定义作品"} · ${w.characters?.length || 0} 位角色</small></div>
+        <div class="work-manage-actions">
+          <button class="mini-btn" data-wm-action="work-open" data-work-id="${safe(w.id)}">查看</button>
+          <button class="mini-btn" data-wm-action="work-edit" data-work-id="${safe(w.id)}">改名</button>
+          <button class="mini-btn" data-wm-action="char-add" data-work-id="${safe(w.id)}">＋ 角色</button>
+          ${w.isBuiltin ? "" : `<button class="mini-btn danger" data-wm-action="work-delete" data-work-id="${safe(w.id)}">删除作品</button>`}
+        </div>
+      </div>
+      <div class="char-manage-list">
+        ${(w.characters || []).map((c) => `
+          <div class="char-manage-row">
+            <span class="char-avatar" style="background:${safe(c.theme?.["--pink"] || "#e8b9c9")}">${safe((c.name || "?").slice(0, 1))}</span>
+            <span><b>${safe(c.name)}</b><small>${countForCharacter(w.id, c.id)} 件商品</small></span>
+            <span class="char-manage-actions">
+              <button class="mini-btn" data-wm-action="char-edit" data-work-id="${safe(w.id)}" data-char-id="${safe(c.id)}">改名</button>
+              ${c.isBuiltin ? "" : `<button class="mini-btn danger" data-wm-action="char-delete" data-work-id="${safe(w.id)}" data-char-id="${safe(c.id)}">删除角色</button>`}
+            </span>
+          </div>`).join("") || `<p class="form-hint">这个作品还没有角色。</p>`}
+      </div>
+    </div>`).join("");
+}
+
+function findWork(id) {
+  return store.works.find((w) => w.id === id);
+}
+
+function findCharacter(work, id) {
+  return work?.characters?.find((c) => c.id === id);
+}
+
+async function addWorkFromManager() {
+  const title = await askText({ title: "新增作品", label: "作品名称", maxLength: 60, confirmLabel: "新增" });
+  if (title === null) return;
+  try {
+    await state.backend.createWork({ title: title.trim(), sortOrder: store.works.length + 1 });
+    await refreshData({ silent: true });
+    renderWorksManager();
+    toast("作品已新增", "success");
+  } catch (e) { toastError(e, "新增作品失败"); }
+}
+
+async function handleWorksManagerClick(event) {
+  const btn = event.target.closest("[data-wm-action]");
+  if (!btn) return;
+  const action = btn.dataset.wmAction;
+  const work = findWork(btn.dataset.workId);
+  if (!work) return;
+  if (action === "work-open") {
+    const first = work.characters?.[0];
+    if (first) location.hash = `#/w/${work.id}/c/${first.id}/catalog`;
+    $("worksManagerDialog")?.close();
+    return;
+  }
+  if (action === "char-add") {
+    const name = await askText({ title: `在「${work.title}」下新增角色`, label: "角色名称", maxLength: 40, confirmLabel: "新增" });
+    if (name === null) return;
+    try {
+      await state.backend.createCharacter(work.id, { name: name.trim(), sortOrder: (work.characters?.length || 0) + 1 });
+      await refreshData({ silent: true });
+      renderWorksManager();
+      toast("角色已新增", "success");
+    } catch (e) { toastError(e, "新增角色失败"); }
+    return;
+  }
+  if (action === "work-edit") {
+    const title = await askText({ title: "修改作品名", label: "作品名称", value: work.title, maxLength: 60 });
+    if (title === null || title.trim() === work.title) return;
+    try {
+      await state.backend.updateWork(work.id, { title: title.trim() }, work.revision);
+      await refreshData({ silent: true });
+      renderWorksManager();
+      toast("作品已更新", "success");
+    } catch (e) { toastError(e, "修改作品失败"); }
+    return;
+  }
+  if (action === "work-delete") {
+    try {
+      const associations = await state.backend.getWorkAssociations(work.id);
+      if (associations.characters > 0 || associations.products > 0) {
+        toast(`该作品下还有 ${associations.characters} 位角色、${associations.products} 件商品，不能删除。请先处理关联。`, "warn", 6000);
+        return;
+      }
+      const ok = await confirmAction({
+        title: `删除作品「${work.title}」？`,
+        message: "删除后可在回收站/备份中恢复；当前版本先做软删除。",
+        confirmLabel: "删除作品", danger: true
+      });
+      if (!ok) return;
+      await state.backend.deleteWork(work.id, work.revision);
+      if (state.currentWork?.id === work.id) location.hash = "#/";
+      await refreshData({ silent: true });
+      renderWorksManager();
+      toast("作品已删除", "success");
+    } catch (e) { toastError(e, "删除作品失败"); }
+    return;
+  }
+  if (action === "char-edit") {
+    const char = findCharacter(work, btn.dataset.charId);
+    if (!char) return;
+    const name = await askText({ title: "修改角色名", label: "角色名称", value: char.name, maxLength: 40 });
+    if (name === null || name.trim() === char.name) return;
+    try {
+      await state.backend.updateCharacter(work.id, char.id, { name: name.trim() }, char.revision);
+      await refreshData({ silent: true });
+      renderWorksManager();
+      toast("角色已更新", "success");
+    } catch (e) { toastError(e, "修改角色失败"); }
+    return;
+  }
+  if (action === "char-delete") {
+    const char = findCharacter(work, btn.dataset.charId);
+    if (!char) return;
+    try {
+      const associations = await state.backend.getCharacterAssociations(work.id, char.id);
+      if (associations.products > 0) {
+        toast(`该角色下还有 ${associations.products} 件商品，不能删除。请先把商品改到其他角色。`, "warn", 6000);
+        return;
+      }
+      const ok = await confirmAction({
+        title: `删除角色「${char.name}」？`,
+        message: "删除后可在回收站/备份中恢复；当前版本先做软删除。",
+        confirmLabel: "删除角色", danger: true
+      });
+      if (!ok) return;
+      await state.backend.deleteCharacter(work.id, char.id, char.revision);
+      if (state.currentChar?.id === char.id && state.currentWork?.id === work.id) {
+        const next = work.characters.find((c) => c.id !== char.id);
+        location.hash = next ? `#/w/${work.id}/c/${next.id}/catalog` : "#/";
+      }
+      await refreshData({ silent: true });
+      renderWorksManager();
+      toast("角色已删除", "success");
+    } catch (e) { toastError(e, "删除角色失败"); }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 主分类管理（20 内置改名/排序 + 自定义分类）                                */
+/* -------------------------------------------------------------------------- */
+
+function ensureCategoryManager() {
+  let dlg = $("categoryManagerDialog");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "categoryManagerDialog";
+  dlg.className = "xmx-modal";
+  dlg.innerHTML = `<div class="xmx-modal-inner">
+    <div class="xmx-modal-head"><div><span class="eyebrow">CATEGORY MANAGER</span><h2>分类管理</h2>
+      <p>20 个内置分类只能改名/排序；自定义分类可删除，删除前必须把商品重新归类。</p></div>
+      <button class="close-btn" id="cmClose" aria-label="关闭">×</button></div>
+    <div class="xmx-modal-body" id="cmBody"></div>
+    <div class="xmx-modal-actions"><button class="outline-btn" id="cmAdd">＋ 新建自定义分类</button>
+      <button class="primary-btn" id="cmDone">完成</button></div></div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#cmClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#cmDone").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#cmAdd").addEventListener("click", addCustomCategory);
+  dlg.querySelector("#cmBody").addEventListener("click", handleCategoryManagerClick);
+  return dlg;
+}
+
+function openCategoryManager() {
+  if (state.mode !== "cloud") { toast("分类管理需要云端账号。", "warn"); return; }
+  if (!store.v6Ready) { toast("V6 数据库尚未就绪，请先执行增量 Migration。", "warn", 5000); return; }
+  const dlg = ensureCategoryManager();
+  renderCategoryManager();
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderCategoryManager() {
+  const el = $("cmBody");
+  if (!el) return;
+  el.innerHTML = store.mainCategories.map((c, index) => `
+    <div class="category-manage-row" data-cat="${safe(c.key)}">
+      <span class="cat-order">${index + 1}</span>
+      <span class="cat-name"><b>${safe(c.label)}</b><small>${c.isBuiltin ? "内置分类 · 不可删除" : "自定义分类"} · ${c.key}</small></span>
+      <span class="cat-actions">
+        <button class="mini-btn" data-cm-action="up" data-key="${safe(c.key)}" ${index === 0 ? "disabled" : ""}>↑</button>
+        <button class="mini-btn" data-cm-action="down" data-key="${safe(c.key)}" ${index === store.mainCategories.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="mini-btn" data-cm-action="rename" data-key="${safe(c.key)}">改名</button>
+        ${c.isBuiltin ? "" : `<button class="mini-btn danger" data-cm-action="delete" data-key="${safe(c.key)}">删除</button>`}
+      </span>
+    </div>`).join("");
+}
+
+function findCategory(key) {
+  return store.mainCategories.find((c) => c.key === key);
+}
+
+async function addCustomCategory() {
+  const label = await askText({ title: "新建自定义主分类", label: "分类名称", maxLength: 20, confirmLabel: "新建" });
+  if (label === null) return;
+  try {
+    await state.backend.createCustomMainCategory({ label: label.trim(), sortOrder: store.mainCategories.length + 1 });
+    await refreshData({ silent: true });
+    renderCategoryManager();
+    toast("自定义分类已新建", "success");
+  } catch (e) { toastError(e, "新建分类失败"); }
+}
+
+async function persistCategoryOrder(sorted) {
+  for (let i = 0; i < sorted.length; i += 1) {
+    const c = sorted[i];
+    if (c.isBuiltin) await state.backend.saveMainCategoryPref(c.key, { label: c.label, sortOrder: i + 1 });
+    else await state.backend.updateCustomMainCategory(c.key, { sortOrder: i + 1 }, c.revision);
+  }
+}
+
+async function moveCategory(key, delta) {
+  const sorted = [...store.mainCategories];
+  const index = sorted.findIndex((c) => c.key === key);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= sorted.length) return;
+  [sorted[index], sorted[target]] = [sorted[target], sorted[index]];
+  try {
+    await persistCategoryOrder(sorted);
+    await refreshData({ silent: true });
+    renderCategoryManager();
+    toast("分类顺序已更新", "success");
+  } catch (e) { toastError(e, "调整顺序失败"); }
+}
+
+async function renameCategory(key) {
+  const c = findCategory(key);
+  if (!c) return;
+  const label = await askText({ title: "修改分类名称", label: "分类名称", value: c.label, maxLength: 20 });
+  if (label === null || label.trim() === c.label) return;
+  try {
+    if (c.isBuiltin) await state.backend.saveMainCategoryPref(key, { label: label.trim(), sortOrder: c.sortOrder });
+    else await state.backend.updateCustomMainCategory(key, { label: label.trim() }, c.revision);
+    await refreshData({ silent: true });
+    renderCategoryManager();
+    toast("分类名称已更新", "success");
+  } catch (e) { toastError(e, "修改分类失败"); }
+}
+
+async function deleteCategory(key) {
+  const c = findCategory(key);
+  if (!c || c.isBuiltin) return;
+  try {
+    const count = await state.backend.countProductsByMainCategory(key);
+    if (count > 0) {
+      openCategoryReassignDialog(c, count);
+      return;
+    }
+    const ok = await confirmAction({
+      title: `删除分类「${c.label}」？`,
+      message: "当前没有商品使用这个分类。删除为软删除，可恢复。",
+      confirmLabel: "删除分类", danger: true
+    });
+    if (!ok) return;
+    await state.backend.deleteCustomMainCategory(key, c.revision);
+    await refreshData({ silent: true });
+    renderCategoryManager();
+    toast("分类已删除", "success");
+  } catch (e) { toastError(e, "删除分类失败"); }
+}
+
+function openCategoryReassignDialog(category, count) {
+  let dlg = $("categoryReassignDialog");
+  if (!dlg) {
+    dlg = document.createElement("dialog");
+    dlg.id = "categoryReassignDialog";
+    dlg.className = "xmx-modal";
+    dlg.innerHTML = `<div class="xmx-modal-inner">
+      <div class="xmx-modal-head"><div><span class="eyebrow">REASSIGN</span><h2>删除前重新归类</h2></div></div>
+      <div class="xmx-modal-body" id="crBody"></div>
+      <div class="xmx-modal-actions"><button class="outline-btn" id="crCancel">取消</button>
+        <button class="primary-btn" id="crConfirm">重新归类并删除</button></div></div>`;
+    document.body.appendChild(dlg);
+    dlg.querySelector("#crCancel").addEventListener("click", () => dlg.close());
+  }
+  $("crBody").innerHTML = `<p>分类「<b>${safe(category.label)}</b>」下有 <b>${count}</b> 件商品，必须先把它们移到另一个分类或“未分类”。</p>
+    <label>目标分类<select id="crTarget">
+      <option value="">未分类</option>
+      ${store.mainCategories.filter((c) => c.key !== category.key).map((c) => `<option value="${safe(c.key)}">${safe(c.label)}</option>`).join("")}
+    </select></label>`;
+  const confirm = async () => {
+    const targetKey = $("crTarget").value || null;
+    const target = targetKey ? findCategory(targetKey) : null;
+    try {
+      if (count > 0) await state.backend.reassignProductsMainCategory(category.key, targetKey, target?.label || null);
+      await state.backend.deleteCustomMainCategory(category.key, category.revision);
+      dlg.close();
+      await refreshData({ silent: true });
+      renderCategoryManager();
+      toast(`已把 ${count} 件商品移到「${target?.label || "未分类"}」，分类已删除`, "success", 5000);
+    } catch (e) { toastError(e, "重新归类失败"); }
+  };
+  $("crConfirm").onclick = confirm;
+  if (!dlg.open) dlg.showModal();
+}
+
+async function handleCategoryManagerClick(event) {
+  const btn = event.target.closest("[data-cm-action]");
+  if (!btn) return;
+  const key = btn.dataset.key;
+  if (btn.dataset.cmAction === "up") await moveCategory(key, -1);
+  if (btn.dataset.cmAction === "down") await moveCategory(key, 1);
+  if (btn.dataset.cmAction === "rename") await renameCategory(key);
+  if (btn.dataset.cmAction === "delete") await deleteCategory(key);
+}
+
+/* -------------------------------------------------------------------------- */
+/* 系列清单                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function ensureSeriesManager() {
+  let dlg = $("seriesManagerDialog");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "seriesManagerDialog";
+  dlg.className = "xmx-modal";
+  dlg.innerHTML = `<div class="xmx-modal-inner">
+    <div class="xmx-modal-head"><div><span class="eyebrow">SERIES CHECKLIST</span><h2>系列全收集清单</h2>
+      <p>可以关联已有商品，也可以手工补充官方款；已拥有按收藏状态计算。</p></div>
+      <button class="close-btn" id="smClose" aria-label="关闭">×</button></div>
+    <div class="xmx-modal-body" id="smBody"></div>
+    <div class="xmx-modal-actions"><button class="outline-btn" id="smAddSeries">＋ 新建系列</button>
+      <button class="primary-btn" id="smDone">完成</button></div></div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#smClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#smDone").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#smAddSeries").addEventListener("click", addSeriesFromManager);
+  dlg.querySelector("#smBody").addEventListener("click", handleSeriesManagerClick);
+  dlg.querySelector("#smBody").addEventListener("change", handleSeriesStatusChange);
+  return dlg;
+}
+
+function openSeriesManager() {
+  if (state.mode !== "cloud") { toast("系列清单需要云端账号。", "warn"); return; }
+  if (!store.v6Ready) { toast("V6 数据库尚未就绪，请先执行增量 Migration。", "warn", 5000); return; }
+  const dlg = ensureSeriesManager();
+  renderSeriesManager();
+  if (!dlg.open) dlg.showModal();
+}
+
+function seriesProgress(series) {
+  const items = store.seriesItems.filter((i) => i.seriesId === series.id);
+  const statusMap = new Map((store.statusDefinitions || []).map((s) => [s.id, s]));
+  const owned = items.filter((i) => {
+    if (i.productId) return store.collections.has(i.productId);
+    if (i.bookId) return (store.books || []).some((b) => b.id === i.bookId && statusMap.get(b.statusId)?.countsAsOwned);
+    return statusMap.get(i.statusId)?.countsAsOwned;
+  }).length;
+  return { total: items.length, owned, rate: items.length ? Math.round((owned / items.length) * 100) : 0 };
+}
+
+function renderSeriesManager() {
+  const el = $("smBody");
+  if (!el) return;
+  if (!store.series.length) {
+    el.innerHTML = `<div class="empty-state"><div>✦</div><h3>还没有系列清单</h3><p>新建系列后，可以关联商品或手工补官方款。</p></div>`;
+    return;
+  }
+  el.innerHTML = store.series.map((s) => {
+    const progress = seriesProgress(s);
+    const items = store.seriesItems.filter((i) => i.seriesId === s.id);
+    const linked = new Set(items.map((i) => i.productId).filter(Boolean));
+    const candidates = currentCharacterProducts().filter((p) => !linked.has(p.id)).slice(0, 200);
+    return `<div class="series-manage" data-series="${safe(s.id)}">
+      <div class="work-manage-head">
+        <div><b>${safe(s.name)}</b><small>${progress.owned}/${progress.total} 已拥有 · ${progress.rate}%${s.totalExpected ? ` · 官方 ${s.totalExpected} 款` : ""}</small></div>
+        <div class="work-manage-actions">
+          <button class="mini-btn" data-sm-action="add-item" data-series-id="${safe(s.id)}">＋ 手工项</button>
+          <button class="mini-btn" data-sm-action="delete-series" data-series-id="${safe(s.id)}">删除系列</button>
+        </div>
+      </div>
+      <div class="series-progress-track"><span style="width:${progress.rate}%"></span></div>
+      <div class="series-items">
+        ${items.map((i) => {
+          const product = i.productId ? store.productMap.get(i.productId) : null;
+          const currentStatus = i.productId ? (store.collections.get(i.productId)?.statusId || "want") : (i.statusId || "want");
+          return `<div class="series-item-row">
+            <span>${product ? safe(product.name) : safe(i.displayName || i.officialNo || "未命名")}</span>
+            <small>${product ? safe(product.productCode || product.id) : "手工项"}</small>
+            <select data-sm-status data-item-id="${safe(i.id)}">
+              ${(store.statusDefinitions.length ? store.statusDefinitions : []).map((st) => `<option value="${safe(st.id)}" ${st.id === currentStatus ? "selected" : ""}>${safe(st.label)}</option>`).join("")}
+            </select>
+            <button class="mini-btn danger" data-sm-action="delete-item" data-series-id="${safe(s.id)}" data-item-id="${safe(i.id)}">删除</button>
+          </div>`;
+        }).join("") || `<p class="form-hint">还没有清单项。</p>`}
+      </div>
+      <div class="series-link-row">
+        <select data-series-product="${safe(s.id)}"><option value="">选择要关联的商品…</option>${candidates.map((p) => `<option value="${safe(p.id)}">${safe(p.name)} · ${safe(p.productCode || p.id)}</option>`).join("")}</select>
+        <button class="mini-btn" data-sm-action="link-product" data-series-id="${safe(s.id)}">关联商品</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function addSeriesFromManager() {
+  const name = await askText({ title: "新建系列", label: "系列名称", maxLength: 80, confirmLabel: "新建" });
+  if (name === null) return;
+  try {
+    await state.backend.createSeries({
+      name: name.trim(), type: "goods",
+      workId: state.currentWork?.id || "gyly",
+      characterId: state.currentChar?.id || "xmx",
+      sortOrder: store.series.length + 1
+    });
+    await refreshData({ silent: true });
+    renderSeriesManager();
+    toast("系列已新建", "success");
+  } catch (e) { toastError(e, "新建系列失败"); }
+}
+
+async function addSeriesItem(seriesId) {
+  const name = await askText({ title: "新增清单项", label: "官方款/商品名", maxLength: 80, confirmLabel: "新增" });
+  if (name === null) return;
+  try {
+    await state.backend.createSeriesItem({
+      seriesId, entityType: "manual", displayName: name.trim(), statusId: "want",
+      sortOrder: store.seriesItems.filter((i) => i.seriesId === seriesId).length + 1
+    });
+    await refreshData({ silent: true });
+    renderSeriesManager();
+    toast("清单项已新增", "success");
+  } catch (e) { toastError(e, "新增清单项失败"); }
+}
+
+async function linkSeriesProduct(seriesId) {
+  const select = document.querySelector(`[data-series-product="${CSS.escape(seriesId)}"]`);
+  const productId = select?.value;
+  if (!productId) { toast("请先选择商品。", "warn"); return; }
+  const product = store.productMap.get(productId);
+  try {
+    await state.backend.createSeriesItem({
+      seriesId, entityType: "product", productId, displayName: product?.name || productId,
+      statusId: store.collections.get(productId)?.statusId || "want",
+      sortOrder: store.seriesItems.filter((i) => i.seriesId === seriesId).length + 1
+    });
+    await refreshData({ silent: true });
+    renderSeriesManager();
+    toast("商品已加入系列清单", "success");
+  } catch (e) { toastError(e, "关联商品失败"); }
+}
+
+async function handleSeriesManagerClick(event) {
+  const btn = event.target.closest("[data-sm-action]");
+  if (!btn) return;
+  const seriesId = btn.dataset.seriesId;
+  const itemId = btn.dataset.itemId;
+  if (btn.dataset.smAction === "add-item") return addSeriesItem(seriesId);
+  if (btn.dataset.smAction === "link-product") return linkSeriesProduct(seriesId);
+  if (btn.dataset.smAction === "delete-item") {
+    const item = store.seriesItems.find((i) => i.id === itemId);
+    if (!item) return;
+    const ok = await confirmAction({ title: "删除清单项？", message: "只删除清单项，不会删除商品或收藏。", confirmLabel: "删除", danger: true });
+    if (!ok) return;
+    try {
+      await state.backend.deleteSeriesItem(itemId, item.revision);
+      await refreshData({ silent: true });
+      renderSeriesManager();
+      toast("清单项已删除", "success");
+    } catch (e) { toastError(e, "删除清单项失败"); }
+    return;
+  }
+  if (btn.dataset.smAction === "delete-series") {
+    const series = store.series.find((s) => s.id === seriesId);
+    if (!series) return;
+    const count = store.seriesItems.filter((i) => i.seriesId === seriesId).length;
+    if (count > 0) { toast(`系列下还有 ${count} 个清单项，请先删除清单项。`, "warn"); return; }
+    const ok = await confirmAction({ title: `删除系列「${series.name}」？`, message: "只删除系列，不影响商品/收藏。", confirmLabel: "删除系列", danger: true });
+    if (!ok) return;
+    try {
+      await state.backend.deleteSeries(seriesId, series.revision);
+      await refreshData({ silent: true });
+      renderSeriesManager();
+      toast("系列已删除", "success");
+    } catch (e) { toastError(e, "删除系列失败"); }
+  }
+}
+
+async function handleSeriesStatusChange(event) {
+  const select = event.target.closest("[data-sm-status]");
+  if (!select) return;
+  const item = store.seriesItems.find((i) => i.id === select.dataset.itemId);
+  if (!item) return;
+  try {
+    if (item.productId) {
+      const entry = store.collections.get(item.productId);
+      if (entry) await state.backend.updateCollection(item.productId, { statusId: select.value }, entry.revision);
+      else await state.backend.addCollection(item.productId, { quantity: 1, statusId: select.value });
+    } else {
+      await state.backend.updateSeriesItem(item.id, { statusId: select.value }, item.revision);
+    }
+    await refreshData({ silent: true });
+    renderSeriesManager();
+  } catch (e) { toastError(e, "更新状态失败"); }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 书籍收藏                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function bookTypeLabel(id) {
+  return store.bookTypes.find((t) => t.id === id)?.label || "未分类";
+}
+
+function bookStatusLabel(id) {
+  return store.statusDefinitions.find((s) => s.id === id)?.label || "想要";
+}
+
+function bookStatusCountsAsOwned(id) {
+  return Boolean(store.statusDefinitions.find((s) => s.id === id)?.countsAsOwned);
+}
+
+function bookSetTitle(setId) {
+  return store.bookSets.find((s) => s.id === setId)?.title || "";
+}
+
+function renderBooks() {
+  const grid = $("bookGrid");
+  if (!grid) return;
+  const typeSel = $("bookTypeFilter");
+  const statusSel = $("bookStatusFilter");
+  const types = store.bookTypes;
+  const statuses = store.statusDefinitions;
+  if (typeSel) {
+    const current = typeSel.value;
+    typeSel.innerHTML = `<option value="">全部类型</option>` + types.map((t) => `<option value="${safe(t.id)}">${safe(t.label)}</option>`).join("");
+    typeSel.value = current;
+  }
+  if (statusSel) {
+    const current = statusSel.value;
+    statusSel.innerHTML = `<option value="">全部状态</option>` + statuses.map((s) => `<option value="${safe(s.id)}">${safe(s.label)}</option>`).join("");
+    statusSel.value = current;
+  }
+  const q = ($("bookSearch")?.value || "").trim().toLowerCase();
+  const type = typeSel?.value || "";
+  const status = statusSel?.value || "";
+  const books = store.books.filter((b) => {
+    if (type && b.bookTypeId !== type) return false;
+    if (status && b.statusId !== status) return false;
+    if (q) {
+      const hay = [b.title, b.subtitle, b.author, b.illustrator, b.publisher, b.isbn, b.language, b.edition, b.binding, b.notes, bookTypeLabel(b.bookTypeId), bookSetTitle(b.setId)]
+        .join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const sets = store.bookSets.filter((s) => {
+    if (type && s.bookTypeId !== type) return false;
+    if (q && ![s.title, s.language, s.publisher, s.edition, s.binding].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+  $("bookSetGrid").innerHTML = sets.map((s) => {
+    const volumes = store.books.filter((b) => b.setId === s.id);
+    const progress = bookSetProgress(s, volumes, statuses);
+    return `<article class="product-card" data-book-set-open="${safe(s.id)}">
+      <div class="product-image book-cover"><span class="book-cover-icon">▤</span><span class="product-tag">套书</span></div>
+      <div class="product-info"><h3>${safe(s.title)}</h3>
+        <div class="product-meta">${safe([s.language, s.publisher, s.edition, s.binding].filter(Boolean).join(" · ") || "未填写版本")}</div>
+        <div class="book-progress"><span style="width:${progress.rate}%"></span></div>
+        <div class="product-price">${progress.ownedVolumes}/${progress.totalVolumes} 卷 · ${progress.rate}%</div>
+        <div class="market-line">缺失：${safe(progress.missingVolumes.slice(0, 8).join("、") || "无")}${progress.missingVolumes.length > 8 ? "…" : ""}</div>
+      </div>
+      <div class="card-actions"><button class="mini-btn" data-book-set-open="${safe(s.id)}">查看套书</button></div>
+    </article>`;
+  }).join("");
+  $("bookGrid").innerHTML = books.map((b) => {
+    const owned = bookStatusCountsAsOwned(b.statusId);
+    return `<article class="product-card" data-book-open="${safe(b.id)}">
+      <div class="product-image book-cover"><span class="book-cover-icon">${owned ? "✓" : "▤"}</span>
+        <span class="${owned ? "product-tag" : "pending-tag"}">${safe(bookStatusLabel(b.statusId))}</span></div>
+      <div class="product-info"><h3>${safe(b.title)}</h3>
+        <div class="product-meta">${safe([b.volumeLabel || (b.volumeNumber != null ? `第${b.volumeNumber}卷` : ""), b.language, b.publisher, b.edition, b.binding].filter(Boolean).join(" · ") || "未填写版本")}</div>
+        <div class="product-price">${b.marketPrice != null ? `市价 ${formatShortMoney(b.marketPrice)}` : "未填市场价"}${b.purchasePrice != null ? ` · 购入 ${formatShortMoney(b.purchasePrice)}` : ""}</div>
+        <div class="market-line">${safe(bookTypeLabel(b.bookTypeId))}${b.isbn ? ` · ISBN ${safe(b.isbn)}` : ""}${b.setId ? ` · ${safe(bookSetTitle(b.setId))}` : ""}</div>
+      </div>
+      <div class="card-actions"><button class="mini-btn" data-book-open="${safe(b.id)}">查看</button></div>
+    </article>`;
+  }).join("");
+  const total = books.length + sets.length;
+  $("bookResultCount").textContent = `${books.length} 本书 · ${sets.length} 套书`;
+  $("bookEmpty").classList.toggle("hidden", total > 0);
+}
+
+function ensureBookForm() {
+  let dlg = $("bookFormDialog");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "bookFormDialog";
+  dlg.className = "xmx-modal";
+  dlg.innerHTML = `<form id="bookForm" class="xmx-modal-inner" novalidate>
+    <div class="xmx-modal-head"><div><span class="eyebrow">BOOK EDITOR</span><h2 id="bookFormTitle">添加书籍</h2>
+      <p>单本可不选套书；套书逐卷记录。</p></div><button type="button" class="close-btn" id="bookFormClose">×</button></div>
+    <div class="xmx-modal-body"><div id="bookFormError" class="form-error hidden"></div>
+      <div class="form-grid-2">
+        <label class="wide">书名 *<input id="bfTitle" maxlength="160"></label>
+        <label>所属套书<select id="bfSet"><option value="">独立单本</option></select></label>
+        <label>书籍类型<select id="bfType"></select></label>
+        <label>作者<input id="bfAuthor" maxlength="80"></label>
+        <label>编绘<input id="bfIllustrator" maxlength="80"></label>
+        <label>出版社<input id="bfPublisher" maxlength="80"></label>
+        <label>语言/版本<input id="bfLanguage" maxlength="40" placeholder="简体/繁体/日文"></label>
+        <label>版次<input id="bfEdition" maxlength="40" placeholder="初版/再版/特装"></label>
+        <label>装帧<input id="bfBinding" maxlength="40" placeholder="平装/精装/盒装"></label>
+        <label>卷标签<input id="bfVolumeLabel" maxlength="40" placeholder="第1卷/番外"></label>
+        <label>卷号<input id="bfVolumeNumber" type="number" step="0.1"></label>
+        <label>ISBN<input id="bfIsbn" maxlength="40"></label>
+        <label>收藏状态<select id="bfStatus"></select></label>
+        <label>市场价格<input id="bfMarketPrice" type="number" min="0" step="0.01"></label>
+        <label>市场价记录日期<input id="bfMarketDate" type="date"></label>
+        <label>实际购买价<input id="bfPurchasePrice" type="number" min="0" step="0.01"></label>
+        <label>购买日期<input id="bfPurchaseDate" type="date"></label>
+        <label>购买渠道<input id="bfChannel" maxlength="60"></label>
+        <label class="wide">备注<textarea id="bfNotes" rows="3" maxlength="500"></textarea></label>
+      </div></div>
+    <div class="xmx-modal-actions"><button type="button" class="ghost-danger hidden" id="bfDelete">删除书籍</button>
+      <span class="left"></span><button type="button" class="outline-btn" id="bfCancel">取消</button>
+      <button type="submit" class="primary-btn" id="bfSave">保存书籍</button></div></form>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#bookFormClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bfCancel").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bookForm").addEventListener("submit", saveBookForm);
+  dlg.querySelector("#bfDelete").addEventListener("click", async () => {
+    const book = dlg._book;
+    if (!book) return;
+    const ok = await confirmAction({ title: `删除「${book.title}」？`, message: "关联订单时不能删除；删除为软删除。", confirmLabel: "删除书籍", danger: true });
+    if (!ok) return;
+    try {
+      await state.backend.deleteBook(book.id, book.revision);
+      dlg.close();
+      await refreshData({ silent: true });
+      renderBooks();
+      toast("书籍已删除", "success");
+    } catch (e) { toastError(e, "删除书籍失败"); }
+  });
+  return dlg;
+}
+
+function openBookForm(book = null, setId = null) {
+  if (state.mode !== "cloud") { toast("书籍管理需要云端账号。", "warn"); return; }
+  if (!store.v6Ready) { toast("V6 数据库尚未就绪，请先执行增量 Migration。", "warn"); return; }
+  const dlg = ensureBookForm();
+  dlg._book = book;
+  $("bookFormTitle").textContent = book ? "编辑书籍" : "添加书籍";
+  $("bfDelete").classList.toggle("hidden", !book);
+  $("bfSet").innerHTML = `<option value="">独立单本</option>` + store.bookSets.map((s) => `<option value="${safe(s.id)}">${safe(s.title)}</option>`).join("");
+  $("bfSet").value = book?.setId || setId || "";
+  $("bfType").innerHTML = store.bookTypes.map((t) => `<option value="${safe(t.id)}">${safe(t.label)}</option>`).join("");
+  $("bfType").value = book?.bookTypeId || store.bookTypes[0]?.id || "";
+  $("bfStatus").innerHTML = store.statusDefinitions.map((s) => `<option value="${safe(s.id)}">${safe(s.label)}</option>`).join("");
+  $("bfStatus").value = book?.statusId || "want";
+  $("bfTitle").value = book?.title || "";
+  $("bfAuthor").value = book?.author || "";
+  $("bfIllustrator").value = book?.illustrator || "";
+  $("bfPublisher").value = book?.publisher || "";
+  $("bfLanguage").value = book?.language || "";
+  $("bfEdition").value = book?.edition || "";
+  $("bfBinding").value = book?.binding || "";
+  $("bfVolumeLabel").value = book?.volumeLabel || "";
+  $("bfVolumeNumber").value = book?.volumeNumber ?? "";
+  $("bfIsbn").value = book?.isbn || "";
+  $("bfMarketPrice").value = book?.marketPrice ?? "";
+  $("bfMarketDate").value = book?.marketPriceDate || "";
+  $("bfPurchasePrice").value = book?.purchasePrice ?? "";
+  $("bfPurchaseDate").value = book?.purchaseDate || "";
+  $("bfChannel").value = book?.purchaseChannel || "";
+  $("bfNotes").value = book?.notes || "";
+  if (!dlg.open) dlg.showModal();
+  setTimeout(() => $("bfTitle")?.focus(), 80);
+}
+
+async function saveBookForm(event) {
+  event.preventDefault();
+  const dlg = $("bookFormDialog");
+  const existing = dlg._book;
+  const title = $("bfTitle").value.trim();
+  if (!title) { $("bookFormError").textContent = "请填写书名。"; $("bookFormError").classList.remove("hidden"); return; }
+  const book = {
+    id: existing?.id,
+    setId: $("bfSet").value || null,
+    bookTypeId: $("bfType").value || null,
+    title,
+    author: $("bfAuthor").value.trim(),
+    illustrator: $("bfIllustrator").value.trim(),
+    publisher: $("bfPublisher").value.trim(),
+    language: $("bfLanguage").value.trim(),
+    edition: $("bfEdition").value.trim(),
+    binding: $("bfBinding").value.trim(),
+    volumeLabel: $("bfVolumeLabel").value.trim(),
+    volumeNumber: $("bfVolumeNumber").value,
+    isbn: $("bfIsbn").value.trim(),
+    statusId: $("bfStatus").value,
+    marketPrice: $("bfMarketPrice").value,
+    marketPriceDate: $("bfMarketDate").value || null,
+    purchasePrice: $("bfPurchasePrice").value,
+    purchaseDate: $("bfPurchaseDate").value || null,
+    purchaseChannel: $("bfChannel").value.trim(),
+    notes: $("bfNotes").value.trim(),
+    quantity: existing?.quantity || 1
+  };
+  try {
+    if (existing) await state.backend.updateBook(existing.id, book, existing.revision);
+    else await state.backend.createBook(book);
+    dlg.close();
+    await refreshData({ silent: true });
+    renderBooks();
+    toast(existing ? "书籍已更新" : "书籍已新增", "success");
+  } catch (e) { toastError(e, "保存书籍失败"); }
+}
+
+function ensureBookSetForm() {
+  let dlg = $("bookSetFormDialog");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "bookSetFormDialog";
+  dlg.className = "xmx-modal";
+  dlg.innerHTML = `<form id="bookSetForm" class="xmx-modal-inner" novalidate>
+    <div class="xmx-modal-head"><div><span class="eyebrow">SET EDITOR</span><h2 id="bookSetFormTitle">新建套书</h2></div>
+      <button type="button" class="close-btn" id="bsfClose">×</button></div>
+    <div class="xmx-modal-body"><div id="bookSetFormError" class="form-error hidden"></div>
+      <div class="form-grid-2">
+        <label class="wide">套书名 *<input id="bsfTitle" maxlength="120"></label>
+        <label>书籍类型<select id="bsfType"></select></label>
+        <label>语言/版本<input id="bsfLanguage" maxlength="40"></label>
+        <label>出版社<input id="bsfPublisher" maxlength="80"></label>
+        <label>版次<input id="bsfEdition" maxlength="40"></label>
+        <label>装帧<input id="bsfBinding" maxlength="40"></label>
+        <label>总卷数<input id="bsfTotal" type="number" min="1" step="1"></label>
+        <label class="wide">说明<textarea id="bsfDescription" rows="3" maxlength="500"></textarea></label>
+      </div></div>
+    <div class="xmx-modal-actions"><button type="button" class="outline-btn" id="bsfCancel">取消</button>
+      <button type="submit" class="primary-btn" id="bsfSave">保存套书</button></div></form>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#bsfClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bsfCancel").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bookSetForm").addEventListener("submit", saveBookSetForm);
+  return dlg;
+}
+
+function openBookSetForm(set = null) {
+  if (state.mode !== "cloud") { toast("套书管理需要云端账号。", "warn"); return; }
+  if (!store.v6Ready) { toast("V6 数据库尚未就绪，请先执行增量 Migration。", "warn"); return; }
+  const dlg = ensureBookSetForm();
+  dlg._set = set;
+  $("bookSetFormTitle").textContent = set ? "编辑套书" : "新建套书";
+  $("bsfType").innerHTML = store.bookTypes.map((t) => `<option value="${safe(t.id)}">${safe(t.label)}</option>`).join("");
+  $("bsfType").value = set?.bookTypeId || store.bookTypes[0]?.id || "";
+  $("bsfTitle").value = set?.title || "";
+  $("bsfLanguage").value = set?.language || "";
+  $("bsfPublisher").value = set?.publisher || "";
+  $("bsfEdition").value = set?.edition || "";
+  $("bsfBinding").value = set?.binding || "";
+  $("bsfTotal").value = set?.totalVolumes ?? "";
+  $("bsfDescription").value = set?.description || "";
+  if (!dlg.open) dlg.showModal();
+}
+
+async function saveBookSetForm(event) {
+  event.preventDefault();
+  const dlg = $("bookSetFormDialog");
+  const existing = dlg._set;
+  const title = $("bsfTitle").value.trim();
+  if (!title) { $("bookSetFormError").textContent = "请填写套书名。"; $("bookSetFormError").classList.remove("hidden"); return; }
+  const set = {
+    id: existing?.id,
+    title,
+    bookTypeId: $("bsfType").value || null,
+    language: $("bsfLanguage").value.trim(),
+    publisher: $("bsfPublisher").value.trim(),
+    edition: $("bsfEdition").value.trim(),
+    binding: $("bsfBinding").value.trim(),
+    totalVolumes: $("bsfTotal").value || null,
+    description: $("bsfDescription").value.trim()
+  };
+  try {
+    if (existing) await state.backend.updateBookSet(existing.id, set, existing.revision);
+    else await state.backend.createBookSet(set);
+    dlg.close();
+    await refreshData({ silent: true });
+    renderBooks();
+    toast(existing ? "套书已更新" : "套书已新建", "success");
+  } catch (e) { toastError(e, "保存套书失败"); }
+}
+
+function openBookDetail(id) {
+  const book = store.books.find((b) => b.id === id);
+  if (!book) return;
+  let dlg = $("bookDetailDialog");
+  if (!dlg) {
+    dlg = document.createElement("dialog");
+    dlg.id = "bookDetailDialog";
+    dlg.className = "xmx-modal";
+    document.body.appendChild(dlg);
+  }
+  dlg.innerHTML = `<div class="xmx-modal-inner">
+    <div class="xmx-modal-head"><div><span class="eyebrow">BOOK DETAIL</span><h2>${safe(book.title)}</h2></div>
+      <button class="close-btn" id="bookDetailClose">×</button></div>
+    <div class="xmx-modal-body">
+      <div class="detail-price-grid">
+        <div class="price-box"><small>市场价格</small><b>${book.marketPrice != null ? formatMoney(book.marketPrice) : "未填写"}</b><em>${book.marketPriceDate ? `记录：${safe(book.marketPriceDate)}` : "记录日期为空"}</em></div>
+        <div class="price-box purchase"><small>实际购买价</small><b>${book.purchasePrice != null ? formatMoney(book.purchasePrice) : "未填写"}</b><em>${book.purchaseDate ? `购买：${safe(book.purchaseDate)}` : "购买日期为空"}</em></div>
+      </div>
+      <div class="detail-fields">
+        ${[
+          ["状态", bookStatusLabel(book.statusId)],
+          ["类型", bookTypeLabel(book.bookTypeId)],
+          ["套书", bookSetTitle(book.setId) || "独立单本"],
+          ["卷", book.volumeLabel || (book.volumeNumber != null ? `第${book.volumeNumber}卷` : "—")],
+          ["作者", book.author || "—"],
+          ["编绘", book.illustrator || "—"],
+          ["出版社", book.publisher || "—"],
+          ["语言/版本", book.language || "—"],
+          ["版次", book.edition || "—"],
+          ["装帧", book.binding || "—"],
+          ["ISBN", book.isbn || "—"],
+          ["数量", `${book.quantity} 本`],
+          ["备注", book.notes || "—"]
+        ].map(([k, v]) => `<div class="field"><span>${safe(k)}</span><b>${safe(v)}</b></div>`).join("")}
+      </div>
+    </div>
+    <div class="xmx-modal-actions"><button class="mini-btn" id="bookDetailEdit">✎ 编辑</button>
+      <button class="ghost-danger" id="bookDetailDelete">删除书籍</button>
+      <span class="left"></span><button class="primary-btn" id="bookDetailDone">完成</button></div></div>`;
+  dlg.querySelector("#bookDetailClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bookDetailDone").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bookDetailEdit").addEventListener("click", () => { dlg.close(); openBookForm(book); });
+  dlg.querySelector("#bookDetailDelete").addEventListener("click", async () => {
+    const ok = await confirmAction({ title: `删除「${book.title}」？`, message: "关联订单时不能删除；删除为软删除。", confirmLabel: "删除书籍", danger: true });
+    if (!ok) return;
+    try {
+      await state.backend.deleteBook(book.id, book.revision);
+      dlg.close();
+      await refreshData({ silent: true });
+      renderBooks();
+      toast("书籍已删除", "success");
+    } catch (e) { toastError(e, "删除书籍失败"); }
+  });
+  if (!dlg.open) dlg.showModal();
+}
+
+function openBookSetDetail(id) {
+  const set = store.bookSets.find((s) => s.id === id);
+  if (!set) return;
+  const volumes = store.books.filter((b) => b.setId === id);
+  const progress = bookSetProgress(set, volumes, store.statusDefinitions);
+  let dlg = $("bookSetDetailDialog");
+  if (!dlg) {
+    dlg = document.createElement("dialog");
+    dlg.id = "bookSetDetailDialog";
+    dlg.className = "xmx-modal";
+    document.body.appendChild(dlg);
+  }
+  dlg.innerHTML = `<div class="xmx-modal-inner">
+    <div class="xmx-modal-head"><div><span class="eyebrow">SET DETAIL</span><h2>${safe(set.title)}</h2>
+      <p>${safe([set.language, set.publisher, set.edition, set.binding].filter(Boolean).join(" · ") || "未填写版本")}</p></div>
+      <button class="close-btn" id="bookSetDetailClose">×</button></div>
+    <div class="xmx-modal-body">
+      <div class="backup-stats"><div class="backup-stat"><small>应有卷数</small><b>${progress.totalVolumes}</b></div>
+        <div class="backup-stat"><small>已拥有</small><b>${progress.ownedVolumes}</b></div>
+        <div class="backup-stat"><small>完成率</small><b>${progress.rate}%</b></div>
+        <div class="backup-stat"><small>缺卷</small><b>${progress.missingVolumes.length}</b></div></div>
+      <p class="form-hint">缺卷：${safe(progress.missingVolumes.join("、") || "无")}</p>
+      <div class="series-items">${volumes.map((b) => `<div class="series-item-row"><span>${safe(b.volumeLabel || b.title)}</span><small>${safe(bookStatusLabel(b.statusId))}</small><span>${b.purchasePrice != null ? formatShortMoney(b.purchasePrice) : ""}</span><button class="mini-btn" data-book-open="${safe(b.id)}">查看</button></div>`).join("") || `<p class="form-hint">还没有卷。</p>`}</div>
+    </div>
+    <div class="xmx-modal-actions"><button class="mini-btn" id="bookSetAddVolume">＋ 添加卷</button>
+      <button class="mini-btn" id="bookSetEdit">✎ 编辑套书</button>
+      <button class="ghost-danger" id="bookSetDelete">删除套书</button>
+      <span class="left"></span><button class="primary-btn" id="bookSetDone">完成</button></div></div>`;
+  dlg.querySelector("#bookSetDetailClose").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bookSetDone").addEventListener("click", () => dlg.close());
+  dlg.querySelector("#bookSetAddVolume").addEventListener("click", () => { dlg.close(); openBookForm(null, set.id); });
+  dlg.querySelector("#bookSetEdit").addEventListener("click", () => { dlg.close(); openBookSetForm(set); });
+  dlg.querySelector("#bookSetDelete").addEventListener("click", async () => {
+    try {
+      await state.backend.deleteBookSet(set.id, set.revision);
+      dlg.close();
+      await refreshData({ silent: true });
+      renderBooks();
+      toast("套书已删除", "success");
+    } catch (e) { toastError(e, "删除套书失败"); }
+  });
+  if (!dlg.open) dlg.showModal();
+}
+
+function openBookTypeManager() {
+  if (state.mode !== "cloud" || !store.v6Ready) { toast("书籍类型管理需要 V6 云端数据库。", "warn"); return; }
+  let dlg = $("bookTypeDialog");
+  if (!dlg) {
+    dlg = document.createElement("dialog");
+    dlg.id = "bookTypeDialog";
+    dlg.className = "xmx-modal";
+    dlg.innerHTML = `<div class="xmx-modal-inner"><div class="xmx-modal-head"><div><span class="eyebrow">BOOK TYPES</span><h2>书籍类型</h2></div>
+      <button class="close-btn" id="bookTypeClose">×</button></div><div class="xmx-modal-body" id="bookTypeBody"></div>
+      <div class="xmx-modal-actions"><button class="outline-btn" id="bookTypeAdd">＋ 新增类型</button><button class="primary-btn" id="bookTypeDone">完成</button></div></div>`;
+    document.body.appendChild(dlg);
+    dlg.querySelector("#bookTypeClose").addEventListener("click", () => dlg.close());
+    dlg.querySelector("#bookTypeDone").addEventListener("click", () => dlg.close());
+    dlg.querySelector("#bookTypeAdd").addEventListener("click", async () => {
+      const label = await askText({ title: "新增书籍类型", label: "类型名称", maxLength: 20 });
+      if (label === null) return;
+      try {
+        await state.backend.createBookType({ label: label.trim(), sortOrder: store.bookTypes.length + 1 });
+        await refreshData({ silent: true });
+        renderBookTypeManager();
+        toast("书籍类型已新增", "success");
+      } catch (e) { toastError(e, "新增类型失败"); }
+    });
+    dlg.querySelector("#bookTypeBody").addEventListener("click", async (event) => {
+      const btn = event.target.closest("[data-book-type-action]");
+      if (!btn) return;
+      const type = store.bookTypes.find((t) => t.id === btn.dataset.id);
+      if (!type) return;
+      if (btn.dataset.bookTypeAction === "rename") {
+        const label = await askText({ title: "修改书籍类型", label: "类型名称", value: type.label, maxLength: 20 });
+        if (label === null || label.trim() === type.label) return;
+        try {
+          await state.backend.updateBookType(type.id, { label: label.trim() }, type.revision);
+          await refreshData({ silent: true }); renderBookTypeManager(); toast("类型已更新", "success");
+        } catch (e) { toastError(e, "修改类型失败"); }
+      }
+      if (btn.dataset.bookTypeAction === "delete") {
+        const ok = await confirmAction({ title: `删除类型「${type.label}」？`, message: "有书籍使用该类型时不能删除。", confirmLabel: "删除类型", danger: true });
+        if (!ok) return;
+        try {
+          await state.backend.deleteBookType(type.id, type.revision);
+          await refreshData({ silent: true }); renderBookTypeManager(); toast("类型已删除", "success");
+        } catch (e) { toastError(e, "删除类型失败"); }
+      }
+    });
+  }
+  renderBookTypeManager();
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderBookTypeManager() {
+  $("bookTypeBody").innerHTML = store.bookTypes.map((t) => `<div class="category-manage-row">
+    <span class="cat-name"><b>${safe(t.label)}</b><small>${store.books.filter((b) => b.bookTypeId === t.id).length} 本书</small></span>
+    <span class="cat-actions"><button class="mini-btn" data-book-type-action="rename" data-id="${safe(t.id)}">改名</button>
+      <button class="mini-btn danger" data-book-type-action="delete" data-id="${safe(t.id)}">删除</button></span></div>`).join("");
+}
+
+/* -------------------------------------------------------------------------- */
 /* 收藏 / 愿望                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -1337,7 +2418,7 @@ function openDetail(id) {
 
   const rows = [
     ["商品 ID", product.id],
-    ["主分类", product.mainCategory || "—"],
+    ["主分类", productCategoryLabel(product)],
     ["独立板块", product.board || "—"],
     ["品种", product.variety || "—"],
     ["商品版本", product.version || "—"],
@@ -1661,6 +2742,11 @@ async function saveProductForm(event) {
   product.series = $("pfSeries").value.trim() || null;
   product.notes = $("pfNotes").value.trim() || null;
   product = applyCategoryToProduct(product, mainCategoryKey);
+  const chosenCategory = mainCategoryKey ? store.mainCategories.find((c) => c.key === mainCategoryKey) : null;
+  if (chosenCategory) {
+    product.mainCategory = chosenCategory.label;
+    product.categoryLabel = chosenCategory.label;
+  }
   product = applyBoardToProduct(product, boardKey);
   product.updatedAt = new Date().toISOString();
   if (!existing) product.createdAt = product.updatedAt;
@@ -2028,7 +3114,7 @@ async function refreshData({ silent = false } = {}) {
   state.refreshing = true;
   if (!silent) updateSyncStatus("syncing");
   try {
-    const snapshot = await state.backend.loadSnapshot();
+    const snapshot = await loadBackendSnapshot();
     applySnapshot(snapshot);
     await hydrateImages();
     renderAll();
