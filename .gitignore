@@ -1,0 +1,14 @@
+node_modules/
+.npm-cache/
+.env
+.env.*
+!.env.example
+# 运行时配置含真实 Supabase 项目地址/密钥，不提交；用 config.example.js 或 Vercel 环境变量
+config.js
+config.local.js
+test-artifacts/
+shots/
+.vercel/
+*.zip
+.DS_Store
+Thumbs.db

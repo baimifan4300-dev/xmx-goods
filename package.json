@@ -1,0 +1,26 @@
+{
+  "name": "xmx-goods",
+  "version": "5.0.0",
+  "private": true,
+  "description": "星愿收藏室 · 夏鸣星谷子图鉴（Supabase 云端版）",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev-server.mjs",
+    "check": "node scripts/check-data.mjs",
+    "test": "node --test test/unit.test.mjs test/migrate.test.mjs",
+    "test:db": "node test/db-schema.test.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "test:full-backup": "node test/backup-full.mjs",
+    "config:check": "node scripts/check-config.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
+    "esbuild": "^0.25.12",
+    "jszip": "^3.10.2"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "playwright-core": "^1.57.0"
+  }
+}

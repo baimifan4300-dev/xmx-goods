@@ -1,0 +1,8 @@
+node_modules
+test-artifacts
+shots
+.npm-cache
+*.zip
+.env
+.env.*
+!.env.example
