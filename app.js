@@ -1,4 +1,4 @@
-/* 星愿收藏室 v3
+/* 星愿收藏室 v4
  * 多作品/多角色 · 只读商品数据 + 本地收藏状态
  * 数据：data/works.json + data/categories.json + data/<work>/<char>/products.json
  * 收藏：localStorage "xmx.collection.v1"
@@ -9,6 +9,15 @@ const LEGACY_STATE_KEY = "xmx-goods-v1";
 const LEGACY_PRODUCTS_KEY = "xmx-goods-products-v1";
 const PAGE_SIZE = 60;
 const CATEGORIES_URL = "data/categories.json";
+const BOARD_STORE_PREFIX = "xmx.boards.v1";
+const BOARD_STORE_VERSION = 1;
+const DEFAULT_GIFT_CATEGORIES = [
+  { id: "gift_badge", name: "吧唧" },
+  { id: "gift_paper", name: "纸片" },
+  { id: "gift_acrylic", name: "亚克力" },
+  { id: "gift_other", name: "其他" }
+];
+const BOARD_RESERVED_NAMES = new Set(["全部", "未分类"]);
 
 /* 分类配置：顺序必须与整理表一致；categories.json 读取失败时使用此内置配置 */
 const DEFAULT_CATEGORY_CONFIG = {
@@ -87,9 +96,11 @@ const safe = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 let works = [];
 let categoryConfig = DEFAULT_CATEGORY_CONFIG;
+let boardStore = null;
+let boardStoreScope = null;
 let ctx = { work: null, char: null, products: [], catalogLoading: false };
 let state = { version: 1, owned: {}, wishlist: [] };
-let view = { q: "", cat: "", status: "", sort: "name", limit: PAGE_SIZE };
+let view = { q: "", cat: "", status: "", sort: "name", limit: PAGE_SIZE, boardCat: "all" };
 
 /* ---------------- 状态 ---------------- */
 function loadState() {
@@ -182,9 +193,239 @@ function productTagClass(p) {
   return "product-tag";
 }
 
-function cardHTML(p) {
+/* ---------------- 联动/满赠分类管理 ----------------
+ * 商品归属只写入 localStorage（xmx.boards.v1.<work>.<char>），
+ * 不改 products.json，也不与收藏状态 xmx.collection.v1 混用。
+ */
+function currentBoardKey() {
+  if (view.cat === "board:collab") return "collab";
+  if (view.cat === "board:gift") return "gift";
+  return null;
+}
+
+function boardTitle(boardKey) {
+  return boardKey === "collab" ? "联动分类" : "满赠分类";
+}
+
+function boardStoreKey() {
+  const workId = ctx.work?.id || "gyly";
+  const charId = ctx.char?.id || "xmx";
+  return `${BOARD_STORE_PREFIX}.${workId}.${charId}`;
+}
+
+function defaultGiftCategoryFor(p) {
+  if (p.category === "badge") return "gift_badge";
+  if (p.category === "card") return "gift_paper";
+  if (p.category === "keychain" || p.category === "standee") return "gift_acrylic";
+  return "gift_other";
+}
+
+function createDefaultBoardStore() {
+  const store = {
+    version: BOARD_STORE_VERSION,
+    boards: {
+      collab: { categories: [], assignments: {} },
+      gift: {
+        categories: DEFAULT_GIFT_CATEGORIES.map((c) => ({ ...c })),
+        assignments: {}
+      }
+    }
+  };
+  // 首次初始化时，按商品原 category 把 77 件满赠商品归入默认四类；
+  // 只写入 localStorage，不修改 products.json。用户之后可自由改。
+  for (const p of ctx.products || []) {
+    if (p.boardKey === "gift") store.boards.gift.assignments[p.id] = defaultGiftCategoryFor(p);
+  }
+  return store;
+}
+
+function normalizeBoardStore(raw) {
+  const store = (raw && raw.boards) ? raw : createDefaultBoardStore();
+  store.version = BOARD_STORE_VERSION;
+  store.boards = store.boards || {};
+  for (const key of ["collab", "gift"]) {
+    const b = store.boards[key] || {};
+    if (!Array.isArray(b.categories)) {
+      b.categories = key === "gift" ? DEFAULT_GIFT_CATEGORIES.map((c) => ({ ...c })) : [];
+    }
+    b.categories = b.categories
+      .filter((c) => c && c.id && c.name)
+      .map((c) => ({ id: String(c.id), name: String(c.name).slice(0, 20) }));
+    b.assignments = (b.assignments && typeof b.assignments === "object" && !Array.isArray(b.assignments))
+      ? b.assignments : {};
+    const ids = new Set(b.categories.map((c) => c.id));
+    for (const pid of Object.keys(b.assignments)) {
+      if (!ids.has(b.assignments[pid])) delete b.assignments[pid];
+    }
+    store.boards[key] = b;
+  }
+  return store;
+}
+
+function loadBoardStore() {
+  const key = boardStoreKey();
+  let raw = null;
+  try { raw = JSON.parse(localStorage.getItem(key) || "null"); }
+  catch (e) { console.warn("联动/满赠分类读取失败", e); }
+  boardStore = normalizeBoardStore(raw);
+  if (!raw || !raw.boards) saveBoardStore();
+}
+
+function loadBoardStoreForCurrentChar() {
+  const scope = boardStoreKey();
+  if (boardStore && boardStoreScope === scope) return;
+  boardStoreScope = scope;
+  loadBoardStore();
+}
+
+function saveBoardStore() {
+  if (!boardStore) return;
+  try { localStorage.setItem(boardStoreKey(), JSON.stringify(boardStore)); }
+  catch (e) { console.warn("联动/满赠分类保存失败", e); toast("本地保存失败，请检查浏览器存储权限"); }
+}
+
+function boardCategories(boardKey) {
+  return (boardStore && boardStore.boards[boardKey]?.categories) || [];
+}
+
+function boardAssignment(boardKey, productId) {
+  return (boardStore && boardStore.boards[boardKey]?.assignments?.[productId]) || "";
+}
+
+function boardAssignHTML(p, boardKey) {
+  const cats = boardCategories(boardKey);
+  if (!cats.length) {
+    return `<div class="board-assign board-assign-empty"><span>归类</span><em>先新建分类后归类</em></div>`;
+  }
+  const cur = boardAssignment(boardKey, p.id);
+  return `<div class="board-assign"><span>归类</span><select data-assign="${safe(p.id)}" data-board="${safe(boardKey)}" aria-label="商品归类"><option value="">未分类</option>${cats.map((c) => `<option value="${safe(c.id)}"${c.id === cur ? " selected" : ""}>${safe(c.name)}</option>`).join("")}</select></div>`;
+}
+
+function newBoardCategoryId() {
+  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function createBoardCategory(boardKey) {
+  const cats = boardCategories(boardKey);
+  const label = boardKey === "collab" ? "联动" : "满赠";
+  const name = prompt(`新建${label}分类名称：`, "");
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return toast("分类名称不能为空");
+  if ([...trimmed].length > 20) return toast("分类名称最多 20 个字符");
+  if (BOARD_RESERVED_NAMES.has(trimmed)) return toast("“全部”“未分类”为系统保留名称");
+  if (cats.some((c) => c.name === trimmed)) return toast("分类名称已存在");
+  const cat = { id: newBoardCategoryId(), name: trimmed };
+  boardStore.boards[boardKey].categories.push(cat);
+  view.boardCat = cat.id;
+  saveBoardStore();
+  renderBoardBar();
+  renderCatalog();
+  toast(`已新建分类「${trimmed}」`);
+}
+
+function renameBoardCategory(boardKey, categoryId) {
+  const cat = boardCategories(boardKey).find((c) => c.id === categoryId);
+  if (!cat) return;
+  const name = prompt("重命名分类：", cat.name);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return toast("分类名称不能为空");
+  if ([...trimmed].length > 20) return toast("分类名称最多 20 个字符");
+  if (BOARD_RESERVED_NAMES.has(trimmed)) return toast("“全部”“未分类”为系统保留名称");
+  if (boardCategories(boardKey).some((c) => c.id !== categoryId && c.name === trimmed)) return toast("分类名称已存在");
+  cat.name = trimmed;
+  saveBoardStore();
+  renderBoardBar();
+  renderCatalog();
+  toast(`已重命名为「${trimmed}」`);
+}
+
+function deleteBoardCategory(boardKey, categoryId) {
+  const cat = boardCategories(boardKey).find((c) => c.id === categoryId);
+  if (!cat) return;
+  if (!confirm(`确定删除分类「${cat.name}」？\n该分类下的商品不会删除，会转入「未分类」。`)) return;
+  if (!confirm(`再次确认：删除「${cat.name}」后不可恢复。`)) return;
+  const board = boardStore.boards[boardKey];
+  board.categories = board.categories.filter((c) => c.id !== categoryId);
+  for (const pid of Object.keys(board.assignments)) {
+    if (board.assignments[pid] === categoryId) delete board.assignments[pid];
+  }
+  if (view.boardCat === categoryId) view.boardCat = "uncat";
+  saveBoardStore();
+  renderBoardBar();
+  renderCatalog();
+  toast(`已删除分类「${cat.name}」，商品已转入未分类`);
+}
+
+function assignBoardProduct(productId, boardKey, categoryId) {
+  if (!boardStore || !boardStore.boards[boardKey]) return;
+  const board = boardStore.boards[boardKey];
+  if (categoryId && !board.categories.some((c) => c.id === categoryId)) return;
+  if (categoryId) board.assignments[productId] = categoryId;
+  else delete board.assignments[productId];
+  saveBoardStore();
+  renderBoardBar();
+  renderCatalog();
+  toast(categoryId ? "已归类" : "已移到未分类");
+}
+
+function renderBoardBar() {
+  const el = $("boardBar");
+  if (!el) return;
+  const boardKey = currentBoardKey();
+  if (!boardKey) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  if (!boardStore) loadBoardStoreForCurrentChar();
+  const cats = boardCategories(boardKey);
+  if (view.boardCat !== "all" && view.boardCat !== "uncat" && !cats.some((c) => c.id === view.boardCat)) {
+    view.boardCat = "all";
+  }
+  const items = ctx.products.filter((p) => p.boardKey === boardKey);
+  const total = items.length;
+  const uncat = items.filter((p) => !boardAssignment(boardKey, p.id)).length;
+  const count = (catId) => items.filter((p) => boardAssignment(boardKey, p.id) === catId).length;
+  const activeCat = cats.find((c) => c.id === view.boardCat);
+  const newLabel = boardKey === "collab" ? "＋ 新建联动" : "＋ 新增类别";
+  const tabs = [
+    `<button class="board-tab ${view.boardCat === "all" ? "active" : ""}" data-board-tab="all">全部<span class="board-count">${total}</span></button>`,
+    `<button class="board-tab board-new" data-board-new="1">${newLabel}</button>`,
+    ...cats.map((c) => `<button class="board-tab ${view.boardCat === c.id ? "active" : ""}" data-board-tab="${safe(c.id)}">${safe(c.name)}<span class="board-count">${count(c.id)}</span></button>`),
+    `<button class="board-tab board-uncat ${view.boardCat === "uncat" ? "active" : ""}" data-board-tab="uncat">未分类<span class="board-count">${uncat}</span></button>`
+  ];
+  const actions = activeCat
+    ? `<div class="board-actions"><button class="board-action" data-board-rename="${safe(activeCat.id)}">重命名</button><button class="board-action danger" data-board-delete="${safe(activeCat.id)}">删除</button></div>`
+    : "";
+  el.innerHTML = `<div class="board-bar-head">
+    <div class="board-bar-title">${boardTitle(boardKey)}<small>分类和商品归属保存在当前浏览器；删除分类会把商品转入未分类。</small></div>
+    ${actions}
+  </div><div class="board-tabs">${tabs.join("")}</div>`;
+  el.classList.remove("hidden");
+}
+
+function openBoard(boardKey) {
+  view.cat = `board:${boardKey}`;
+  view.boardCat = "all";
+  view.limit = PAGE_SIZE;
+  const target = currentCharRoute("catalog");
+  if (location.hash === target) {
+    fillCategoryFilter();
+    renderBoardBar();
+    showPage("catalog");
+    renderCatalog();
+  } else {
+    location.hash = target;
+  }
+}
+
+
+function cardHTML(p, opts = {}) {
   const owned = isOwned(p.id), wish = isWish(p.id);
   const tag = productCategoryLabel(p);
+  const boardKey = opts.boardView ? currentBoardKey() : null;
   return `<article class="product-card" data-open="${safe(p.id)}">
     <div class="product-image crop-box">${mediaHTML(p)}
       <span class="${productTagClass(p)}">${safe(tag)}</span>
@@ -192,7 +433,8 @@ function cardHTML(p) {
     </div>
     <div class="product-info"><h3>${safe(p.name || "待识别")}</h3>
       <div class="product-meta">${safe(p.series || p.folder || "未填写系列")}${p.productCode ? ` · ${safe(p.productCode)}` : ""}</div>
-      <div class="product-price">${priceLabel(p)}</div></div>
+      <div class="product-price">${priceLabel(p)}</div>
+      ${boardKey && p.boardKey === boardKey ? boardAssignHTML(p, boardKey) : ""}</div>
     <div class="card-actions">
       <button class="mini-btn ${owned ? "active" : ""}" data-action="owned" data-id="${safe(p.id)}">${owned ? "✓ 已拥有" : "+ 已拥有"}</button>
       <button class="mini-btn ${wish ? "active" : ""}" data-action="wish" data-id="${safe(p.id)}">${wish ? "★ 已心愿" : "☆ 想要"}</button>
@@ -217,6 +459,13 @@ function filteredProducts() {
         const [kind, key] = view.cat.split(":");
         if (kind === "main" && p.mainCategoryKey !== key) return false;
         if (kind === "board" && p.boardKey !== key) return false;
+        if (kind === "board") {
+          if (view.boardCat === "uncat") {
+            if (boardAssignment(key, p.id)) return false;
+          } else if (view.boardCat && view.boardCat !== "all") {
+            if (boardAssignment(key, p.id) !== view.boardCat) return false;
+          }
+        }
       }
     }
     if (view.status === "owned" && !isOwned(p.id)) return false;
@@ -263,7 +512,7 @@ function renderWorksStrip() {
 function renderCatalog() {
   const list = filteredProducts();
   const shown = list.slice(0, view.limit);
-  $("productGrid").innerHTML = shown.map(cardHTML).join("");
+  $("productGrid").innerHTML = shown.map((p) => cardHTML(p, { boardView: true })).join("");
   $("catalogEmpty").classList.toggle("hidden", list.length > 0);
   const more = $("loadMoreBtn");
   if (more) {
@@ -315,6 +564,7 @@ function renderAll() {
   $("wishCount").textContent = ctx.products.filter((p) => isWish(p.id)).length;
   $("rateCount").textContent = (total ? Math.round((owned / total) * 100) : 0) + "%";
   renderWorksStrip();
+  renderBoardBar();
   if (ctx.products.length) {
     renderCatalog();
     renderGrid("ownedGrid", ctx.products.filter((p) => isOwned(p.id)), "ownedEmpty");
@@ -372,6 +622,7 @@ async function applyRoute() {
   const char = work ? (work.characters.find((c) => c.id === (r && r.charId)) || work.characters[0]) : null;
   if (!work || !char) { showPage("home"); return; }
   await loadCatalog(work, char);
+  loadBoardStoreForCurrentChar();
   applyTheme(char);
   fillCategoryFilter();
   showPage(r ? (r.page || "home") : "home");
@@ -413,6 +664,7 @@ function ensureDetailDialog() {
       <div class="eyebrow">PRODUCT DETAIL</div>
       <h2 id="detailName"></h2>
       <div id="detailMeta" class="detail-meta"></div>
+      <div id="detailBoardAssign" class="detail-board-assign"></div>
       <div id="detailNote"></div>
       <div id="detailFields" class="detail-fields"></div>
       <div class="detail-own" id="detailOwn"></div>
@@ -449,6 +701,14 @@ function openDetail(id) {
   const metaTags = [`<span class="${productTagClass(p)}">${safe(productCategoryLabel(p))}</span>`];
   if (p.verificationStatus === "pending" && p.classificationStatus !== "待核对") metaTags.push('<span class="pending-tag">待核实</span>');
   $("detailMeta").innerHTML = metaTags.join("");
+  if (p.boardKey) {
+    const cats = boardCategories(p.boardKey);
+    const cur = boardAssignment(p.boardKey, p.id);
+    $("detailBoardAssign").innerHTML = `<span>所属分类</span><select id="detailAssign"><option value="">未分类</option>${cats.map((c) => `<option value="${safe(c.id)}"${c.id === cur ? " selected" : ""}>${safe(c.name)}</option>`).join("")}</select>`;
+    $("detailAssign").addEventListener("change", (e) => assignBoardProduct(p.id, p.boardKey, e.target.value));
+  } else {
+    $("detailBoardAssign").innerHTML = "";
+  }
   $("detailNote").innerHTML = p.image.sharp ? "" : `<div class="detail-note">该商品在原合集中可见像素较少，按清晰度规则不单独放大裁剪；上方整图红框是它的位置。</div>`;
   const rows = [
     ["ID", p.id], ["主分类", p.mainCategory || "—"], ["独立板块", p.board || "—"],
@@ -505,8 +765,37 @@ function importBackup(file) {
 document.addEventListener("click", (e) => {
   const nav = e.target.closest("[data-page]");
   if (nav) { go(nav.dataset.page); return; }
+  const boardEnter = e.target.closest("[data-board-enter]");
+  if (boardEnter) { openBoard(boardEnter.dataset.boardEnter); return; }
+  const boardTab = e.target.closest("[data-board-tab]");
+  if (boardTab) {
+    view.boardCat = boardTab.dataset.boardTab || "all";
+    view.limit = PAGE_SIZE;
+    renderBoardBar();
+    renderCatalog();
+    return;
+  }
+  const boardNew = e.target.closest("[data-board-new]");
+  if (boardNew) {
+    const boardKey = currentBoardKey();
+    if (boardKey) createBoardCategory(boardKey);
+    return;
+  }
+  const boardRename = e.target.closest("[data-board-rename]");
+  if (boardRename) {
+    const boardKey = currentBoardKey();
+    if (boardKey) renameBoardCategory(boardKey, boardRename.dataset.boardRename);
+    return;
+  }
+  const boardDelete = e.target.closest("[data-board-delete]");
+  if (boardDelete) {
+    const boardKey = currentBoardKey();
+    if (boardKey) deleteBoardCategory(boardKey, boardDelete.dataset.boardDelete);
+    return;
+  }
   const goBtn = e.target.closest("[data-go]");
   if (goBtn) { go(goBtn.dataset.go); return; }
+  if (e.target.closest("[data-assign]")) return;
   const action = e.target.closest("[data-action]");
   if (action) {
     const id = action.dataset.id;
@@ -519,13 +808,21 @@ document.addEventListener("click", (e) => {
   if (card) openDetail(card.dataset.open);
 });
 
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest("[data-assign]");
+  if (sel) assignBoardProduct(sel.dataset.assign, sel.dataset.board, sel.value);
+});
+
 $("menuToggle").addEventListener("click", () => $("mainNav").classList.toggle("open"));
 ["searchInput", "categoryFilter", "statusFilter", "sortFilter"].forEach((id) => $(id)?.addEventListener("input", () => {
+  const prevCat = view.cat;
   view.q = $("searchInput").value.trim();
   view.cat = $("categoryFilter").value;
   view.status = $("statusFilter").value;
   view.sort = $("sortFilter").value;
+  if (prevCat !== view.cat) view.boardCat = "all";
   view.limit = PAGE_SIZE;
+  renderBoardBar();
   renderCatalog();
 }));
 $("addProductBtn")?.addEventListener("click", () => toast("商品资料由 JSON 统一维护，暂不支持站内新增"));

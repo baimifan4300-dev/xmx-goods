@@ -16,3 +16,31 @@ dialog{border:1px solid #f0dce3;border-radius:20px;padding:0;width:min(580px,cal
 .detail-meta .product-tag,.detail-meta .pending-tag{position:static}
 .progress-row.board-row span:first-child{color:#8a5ca8}
 @media(min-width:641px){.progress-row{grid-template-columns:110px 1fr 55px}}
+
+
+/* v4 联动/满赠分类管理 */
+.board-bar{margin:0 0 16px;padding:16px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 25px #8e52600b}
+.board-bar.hidden{display:none}
+.board-bar-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
+.board-bar-title{font-size:13px;font-weight:600;color:var(--ink);line-height:1.5}
+.board-bar-title small{display:block;font-size:10px;color:#b09da5;font-weight:400;margin-top:4px}
+.board-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.board-tab{border:1px solid #f0dce3;background:#fff8fa;color:#a76f83;border-radius:20px;padding:7px 12px;font:inherit;font-size:12px;cursor:pointer;transition:.2s;white-space:nowrap}
+.board-tab:hover{background:#fcecf1}
+.board-tab.active{background:var(--pink);border-color:var(--pink);color:#fff;box-shadow:0 5px 14px #d989a233}
+.board-tab.board-new{border-style:dashed;background:#fff}
+.board-tab.board-uncat{color:#8f7b84}
+.board-count{font-size:10px;opacity:.72;margin-left:5px}
+.board-actions{display:flex;gap:6px;flex-shrink:0}
+.board-action{border:1px solid #f0dce3;background:#fff;color:#a76f83;border-radius:8px;padding:6px 10px;font:inherit;font-size:11px;cursor:pointer}
+.board-action:hover{background:#fcecf1}
+.board-action.danger{color:#b24a5e;border-color:#f2c9d1}
+.board-action.danger:hover{background:#fff0f3}
+.board-assign{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:10px;color:#a98b97}
+.board-assign select{flex:1;min-width:0;border:1px solid #f0dce3;border-radius:8px;padding:5px 6px;font:inherit;font-size:11px;color:#8f7b84;background:#fff;cursor:pointer}
+.board-assign select:focus{outline:none;border-color:var(--pink)}
+.board-assign-empty em{font-style:normal;color:#b09da5}
+.detail-board-assign{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:11px;color:#8a7680}
+.detail-board-assign:empty{display:none}
+.detail-board-assign select{flex:1;border:1px solid #ead2da;border-radius:9px;padding:7px;font:inherit;font-size:12px;background:#fff;color:#8f7b84}
+@media(max-width:640px){.board-bar{padding:13px}.board-tab{font-size:11px;padding:6px 9px}.board-bar-title small{font-size:9px}}
