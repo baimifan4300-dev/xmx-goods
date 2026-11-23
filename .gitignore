@@ -5,6 +5,8 @@ node_modules/
 !.env.example
 # 运行时配置含真实 Supabase 项目地址/密钥，不提交；用 config.example.js 或 Vercel 环境变量
 config.js
+# GitHub Pages 无构建步骤，config.js 需要提交；只放 publishable key，绝不放 service_role
+!config.js
 config.local.js
 test-artifacts/
 shots/
